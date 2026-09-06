@@ -1,0 +1,56 @@
+# Render blueprint for the API. Import this from the repo and Render fills in
+# the service; the values marked `sync: false` are prompted for, so no secret
+# is ever committed here.
+services:
+  - type: web
+    name: ironcore-api
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render provides the port to bind; the app reads PORT already.
+      - key: PORT
+        value: 10000
+
+      # The frontend calls the API through its own /api proxy, so the browser
+      # never sends a cross-origin request. This stays set as a backstop for
+      # anything that does reach the API directly.
+      - key: CORS_ORIGINS
+        sync: false
+
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DB
+        value: ironcore
+
+      # Generate each with:
+      #   node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: ACCESS_TOKEN_TTL_MINUTES
+        value: 15
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: 7
+
+      # Every cookie is issued over HTTPS in production.
+      - key: COOKIE_SECURE
+        value: true
+      # The frontend serves the API under /api, and cookie paths are matched
+      # against the browser's URL rather than the one this service saw.
+      - key: COOKIE_PATH_PREFIX
+        value: /api
+
+      - key: PLATFORM_FEE_RATE
+        value: 0.05
+
+      # Keep the simulated gateway until real Paystack keys are ready.
+      - key: PAYMENTS_PROVIDER
+        value: mock
+      - key: PAYMENT_CALLBACK_URL
+        sync: false
