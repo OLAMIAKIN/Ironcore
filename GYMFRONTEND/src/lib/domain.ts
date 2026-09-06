@@ -34,6 +34,8 @@ export type OwnerGym = Gym & {
     accountName: string;
     accountLast4: string;
     verifiedAt?: string;
+    /** The payout handles belong to a different gateway and no longer work. */
+    needsReconnect: boolean;
   };
 };
 
@@ -78,6 +80,30 @@ export type RosterRow = {
   status: string;
   expiresAt?: string;
   daysLeft: number;
+  /** Until they sign in, the desk can still re-issue their sign-in details. */
+  hasLoggedIn?: boolean;
+};
+
+/** A guest pass, as the member's own screen sees it. */
+export type DayPass = {
+  id: string;
+  token: string;
+  gymId: string;
+  gym: { name: string; branch: string; area: string };
+  validUntil: string;
+  usedAt?: string;
+};
+
+/** What a gym hands a member so they can sign in for the first time. */
+export type MemberCredentials = {
+  id: string;
+  name: string;
+  phone: string;
+  plan: string;
+  qrToken: string;
+  isNewAccount: boolean;
+  /** Absent when the number already had an account with its own password. */
+  temporaryPassword?: string;
 };
 
 export type Paginated<T> = {
@@ -231,6 +257,22 @@ export function useRecentCheckIns(gymId: string | undefined): Query<{
   return useApi(gymId ? `/gyms/${gymId}/checkins/recent` : null);
 }
 
+/**
+ * Every pass they have bought, newest first. Read on every visit rather than
+ * held from the purchase, so today's code survives a refresh or a new device.
+ */
+export function useMyDayPasses(): Query<{ items: DayPass[] }> {
+  const { user } = useSession();
+  return useApi<{ items: DayPass[] }>(
+    user?.role === "member" ? "/me/day-passes" : null,
+  );
+}
+
+/** A pass is good until closing time, and only for its first scan. */
+export function isPassLive(pass: DayPass): boolean {
+  return !pass.usedAt && new Date(pass.validUntil).getTime() > Date.now();
+}
+
 export function useBanks(): Query<{ items: Bank[] }> {
   return useApi<{ items: Bank[] }>("/banks");
 }
@@ -259,6 +301,24 @@ export function saveSettlementAccount(
 
 export function scanToken(gymId: string, token: string) {
   return api.post<ScanResult>(`/gyms/${gymId}/checkins/scan`, { token });
+}
+
+/**
+ * Mints fresh sign-in details for a member who never received theirs. The old
+ * password cannot be recovered — only its hash was stored — so this replaces
+ * it, and the API refuses once the member has signed in even once.
+ */
+export function reissueCredentials(gymId: string, memberId: string) {
+  return api.post<MemberCredentials>(
+    `/gyms/${gymId}/members/${memberId}/credentials`,
+  );
+}
+
+export function addMember(
+  gymId: string,
+  input: { name: string; phone: string; planId: string },
+) {
+  return api.post<MemberCredentials>(`/gyms/${gymId}/members`, input);
 }
 
 export function addStaff(

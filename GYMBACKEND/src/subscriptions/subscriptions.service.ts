@@ -32,6 +32,11 @@ export type RosterRow = {
   status: Subscription["status"];
   expiresAt?: Date;
   daysLeft: number;
+  /**
+   * Whether they have ever signed in. Until they have, the desk can still
+   * re-issue the sign-in details it handed over; after, the password is theirs.
+   */
+  hasLoggedIn?: boolean;
 };
 
 /** Whole days from now until `date`, floored at zero. */
@@ -221,7 +226,12 @@ export class SubscriptionsService {
 
     const [result] = await this.subscriptions.aggregate<{
       items: (SubscriptionDocument & {
-        member: { _id: Types.ObjectId; name: string; phone: string };
+        member: {
+          _id: Types.ObjectId;
+          name: string;
+          phone: string;
+          lastLoginAt?: Date;
+        };
       })[];
       total: { count: number }[];
     }>([
@@ -247,6 +257,7 @@ export class SubscriptionsService {
       status: statusOf(row),
       expiresAt: row.expiresAt,
       daysLeft: daysUntil(row.expiresAt),
+      hasLoggedIn: Boolean(row.member.lastLoginAt),
     }));
 
     return paginate(items, result?.total[0]?.count ?? 0, query);
@@ -301,6 +312,26 @@ export class SubscriptionsService {
       status: "active",
       expiresAt: { $gt: new Date() },
     });
+  }
+
+  /**
+   * A member's subscription at one gym. Used by staff endpoints, so it is the
+   * check that keeps one gym from acting on another gym's member.
+   */
+  async requireForGym(
+    memberId: string,
+    gymId: Types.ObjectId,
+  ): Promise<SubscriptionDocument> {
+    if (!Types.ObjectId.isValid(memberId)) {
+      throw new NotFoundException("That member is not on your roster");
+    }
+
+    const row = await this.subscriptions.findOne({
+      memberId: new Types.ObjectId(memberId),
+      gymId,
+    });
+    if (!row) throw new NotFoundException("That member is not on your roster");
+    return row;
   }
 
   async requireForMember(

@@ -4,6 +4,21 @@ import { Model, Types } from "mongoose";
 import { accessToken } from "@/common/utils/reference";
 import { DayPass, type DayPassDocument } from "@/daypasses/schemas/day-pass.schema";
 
+type PopulatedGym = {
+  _id: Types.ObjectId;
+  name: string;
+  branch: string;
+  area: string;
+};
+
+/**
+ * A pass with its gym resolved. The member's screen shows the pass on its own,
+ * long after the gym list that was on screen when they bought it has gone.
+ */
+export type PassWithGym = Omit<DayPassDocument, "gymId"> & {
+  gymId: PopulatedGym;
+};
+
 /** Passes expire at the end of the day they were bought, local time. */
 function endOfToday(): Date {
   const end = new Date();
@@ -50,12 +65,13 @@ export class DayPassesService {
     return result.modifiedCount === 1;
   }
 
-  async listForMember(buyerId: string): Promise<DayPassDocument[]> {
+  async listForMember(buyerId: string): Promise<PassWithGym[]> {
     return this.passes
       .find({ buyerId: new Types.ObjectId(buyerId) })
+      .populate<{ gymId: PopulatedGym }>("gymId", "name branch area")
       .sort({ createdAt: -1 })
       .limit(20)
-      .lean<DayPassDocument[]>();
+      .lean<PassWithGym[]>();
   }
 
   async requireForMember(

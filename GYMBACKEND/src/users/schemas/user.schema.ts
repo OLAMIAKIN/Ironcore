@@ -48,6 +48,14 @@ export class User {
 
   @Prop()
   lastLoginAt?: Date;
+
+  /**
+   * Set when a gym creates the account on someone's behalf, so the password is
+   * one a stranger at a desk has seen. The app makes them replace it before
+   * anything else, and clears this once they have.
+   */
+  @Prop({ default: false })
+  mustChangePassword!: boolean;
 }
 
 export type UserDocument = User & Document<Types.ObjectId>;

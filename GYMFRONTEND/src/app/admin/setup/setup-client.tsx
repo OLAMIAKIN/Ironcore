@@ -288,7 +288,12 @@ function SettlementCard({
 }: {
   gymId: string | undefined;
   account:
-    | { bankName: string; accountName: string; accountLast4: string }
+    | {
+        bankName: string;
+        accountName: string;
+        accountLast4: string;
+        needsReconnect: boolean;
+      }
     | undefined;
   onSaved: () => void;
 }) {
@@ -335,7 +340,11 @@ function SettlementCard({
         <h2 className="font-display text-[19px] tracking-[0.3px]">
           Settlement account
         </h2>
-        {account && <Pill tone="valid">Verified</Pill>}
+        {account && (
+          <Pill tone={account.needsReconnect ? "hazard" : "valid"}>
+            {account.needsReconnect ? "Reconnect" : "Verified"}
+          </Pill>
+        )}
       </div>
 
       {account && !editing ? (
@@ -351,16 +360,30 @@ function SettlementCard({
               </p>
             </div>
           </div>
-          <Helper className="mt-3">
-            Your share of every member payment is settled here. IronCore never
-            holds it in between.
-          </Helper>
+          {account.needsReconnect ? (
+            /*
+             * The payout handles were issued by a different payment gateway —
+             * usually the sandbox one, before real keys were added. They mean
+             * nothing to the gateway now in use, which rejects every payment
+             * outright, so this has to be fixed before the gym can take money.
+             */
+            <p className="mt-3 rounded-ctl border border-hazard/40 bg-hazard-dim px-3.5 py-3 text-helper leading-[1.5] font-semibold text-ink">
+              This account was set up with a different payment provider, so
+              payments to your gym will be declined. Add it again to reconnect
+              it — the bank details are the same.
+            </p>
+          ) : (
+            <Helper className="mt-3">
+              Your share of every member payment is settled here. IronCore never
+              holds it in between.
+            </Helper>
+          )}
           <Button
-            variant="ghost"
+            variant={account.needsReconnect ? "primary" : "ghost"}
             className="mt-3"
             onClick={() => setEditing(true)}
           >
-            Change account
+            {account.needsReconnect ? "Reconnect account" : "Change account"}
           </Button>
         </>
       ) : (

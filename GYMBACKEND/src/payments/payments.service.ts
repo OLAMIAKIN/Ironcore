@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -12,7 +13,7 @@ import { Model, Types } from "mongoose";
 import { splitOf } from "@/common/utils/money";
 import { paymentReference } from "@/common/utils/reference";
 import type { AuthUser } from "@/common/types";
-import { GymsService } from "@/gyms/gyms.service";
+import { GymsService, settlementMatchesProvider } from "@/gyms/gyms.service";
 import { listingPlanById } from "@/gyms/listing-plans";
 import { PlansService } from "@/plans/plans.service";
 import { SubscriptionsService } from "@/subscriptions/subscriptions.service";
@@ -101,16 +102,31 @@ export class PaymentsService {
       ? await this.gyms.requireGym(draft.gymId.toString())
       : null;
 
+    /**
+     * Payout handles belong to the gateway that issued them. A subaccount minted
+     * by the mock gateway is meaningless to Paystack, which rejects the whole
+     * charge as "Invalid Subaccount" — so this is caught here, where the gym can
+     * be named and told what to do, rather than as a dead end in the checkout.
+     */
+    const splitToGym =
+      draft.purpose !== "listing" &&
+      gym?.settlementAccount?.subaccountCode !== undefined;
+
+    if (splitToGym && !settlementMatchesProvider(gym!, this.provider.name)) {
+      throw new ConflictException(
+        "This gym's payout account was set up with a different payment provider. The gym needs to add its settlement account again before it can take payments.",
+      );
+    }
+
     const initialized = await this.provider.initialize({
       reference,
       amount: draft.gross,
       email: payer.email ?? `${payer.phone}@members.ironcore.app`,
       channel: dto.channel,
       // Listing payments are owed to the platform, so they are never split.
-      subaccountCode:
-        draft.purpose === "listing"
-          ? undefined
-          : gym?.settlementAccount?.subaccountCode,
+      subaccountCode: splitToGym
+        ? gym?.settlementAccount?.subaccountCode
+        : undefined,
       gymNet: draft.gymNet,
       metadata: {
         purpose: draft.purpose,

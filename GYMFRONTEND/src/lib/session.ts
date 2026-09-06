@@ -19,6 +19,11 @@ export type SessionUser = {
   role: Role;
   /** Staff only — the gym they work at. */
   gymId?: string;
+  /**
+   * True while they are still on a password a gym's front desk chose for them.
+   * The app makes them replace it before it lets them do anything else.
+   */
+  mustChangePassword?: boolean;
 };
 
 type State = {
@@ -121,6 +126,19 @@ export async function signUpGym(input: {
   );
   set({ user: result.user, status: "ready" });
   return result;
+}
+
+/**
+ * Changing a password signs every device out, this one included — the API
+ * clears the cookies as it saves. So the local session is dropped to match, and
+ * the caller sends them back to sign in with the password they just chose.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  await api.post("/auth/change-password", { currentPassword, newPassword });
+  set({ user: null, status: "ready" });
 }
 
 export async function signOut(): Promise<void> {

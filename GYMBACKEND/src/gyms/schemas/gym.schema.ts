@@ -12,6 +12,13 @@ export class SettlementAccount {
   /** Provider handles, set once the account is registered for payouts. */
   @Prop() recipientCode?: string;
   @Prop() subaccountCode?: string;
+  /**
+   * Which gateway issued the handles above. A subaccount created by the mock
+   * gateway means nothing to Paystack, and sending one to the real API fails
+   * the whole payment with "Invalid Subaccount" — so the issuer is recorded and
+   * checked before the code is ever used.
+   */
+  @Prop() provider?: string;
   @Prop() verifiedAt?: Date;
 }
 

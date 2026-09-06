@@ -17,7 +17,12 @@ export class DayPassesController {
       items: rows.map((row) => ({
         id: row._id.toString(),
         token: row.token,
-        gymId: row.gymId.toString(),
+        gymId: row.gymId._id.toString(),
+        gym: {
+          name: row.gymId.name,
+          branch: row.gymId.branch,
+          area: row.gymId.area,
+        },
         validUntil: row.validUntil,
         usedAt: row.usedAt,
       })),

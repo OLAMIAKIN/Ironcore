@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { ArrowRightIcon } from "@/components/icons";
 import { AuthHeading } from "@/components/layout/auth-layout";
@@ -18,6 +18,8 @@ import { signIn } from "@/lib/session";
  */
 export function SignInForm() {
   const router = useRouter();
+  // Set by the change-password screen, which signs every device out as it saves.
+  const justChanged = useSearchParams().get("changed") === "1";
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<{ phone?: string; password?: string }>(
@@ -41,6 +43,14 @@ export function SignInForm() {
     setSubmitting(true);
     try {
       const user = await signIn(phone, password);
+
+      // An account a gym created still has the password their front desk read
+      // out. Nothing else opens until they have replaced it.
+      if (user.mustChangePassword) {
+        router.push("/change-password?first=1");
+        return;
+      }
+
       // A staff number typed into the member form still lands somewhere useful.
       router.push(user.role === "member" ? "/home" : "/admin/dashboard");
     } catch (error: unknown) {
@@ -56,6 +66,15 @@ export function SignInForm() {
         title="Welcome back"
         subtitle="Sign in with the number your gym has on file."
       />
+
+      {justChanged && (
+        <p
+          role="status"
+          className="mb-5 rounded-ctl border border-valid/40 bg-valid-dim px-3.5 py-3 text-sm font-semibold text-ink"
+        >
+          Password changed. Sign in with your new one.
+        </p>
+      )}
 
       <form onSubmit={handleSubmit} noValidate>
         <InputField

@@ -17,27 +17,33 @@ import { InputField, SelectField } from "@/components/ui/field";
 import { ListItem } from "@/components/ui/list-item";
 import { Pill } from "@/components/ui/pill";
 import { Stat, StatGrid } from "@/components/ui/stat";
-import { api, messageOf } from "@/lib/api";
+import { messageOf } from "@/lib/api";
 import { readMemberSheet } from "@/lib/csv";
 import { daysLeftLabel } from "@/lib/format";
-import { useMyGym, usePlans, useRoster } from "@/lib/domain";
+import {
+  addMember as createMember,
+  reissueCredentials,
+  useMyGym,
+  usePlans,
+  useRoster,
+  type MemberCredentials,
+  type RosterRow,
+} from "@/lib/domain";
 
 const SAMPLE_SHEET = `name,phone,plan
 Chidinma Okafor,08032147765,Monthly
 Tunde Adisa,08064412210,Quarterly`;
 
-type AddResult = {
-  name: string;
-  /** Doubles as the username — members sign in with their phone number. */
-  phone: string;
-  plan: string;
-  /** The door code, so it can be sent on with the sign-in details. */
-  qrToken: string;
-  /** False when the number already had an account, and so already has a password. */
-  isNewAccount: boolean;
-  /** Only present for a brand new account. Shown once, then gone. */
-  temporaryPassword?: string;
-};
+type AddResult = MemberCredentials;
+
+/**
+ * Where the member signs in. Read from the browser rather than configured, so
+ * the message carries whichever address the gym actually reached the app on.
+ */
+function signInUrl(): string {
+  if (typeof window === "undefined") return "/sign-in";
+  return `${window.location.origin}/sign-in`;
+}
 
 /**
  * The roster. Members normally arrive by paying for a plan; this screen is for
@@ -54,6 +60,7 @@ export function MembersClient() {
   const roster = useRoster(gymId, search);
 
   const [flash, setFlash] = useState<string | null>(null);
+  const [problem, setProblem] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<AddResult[]>([]);
 
   const rows = roster.data?.items ?? [];
@@ -64,9 +71,28 @@ export function MembersClient() {
     phone: string;
     planId: string;
   }): Promise<AddResult> {
-    const result = await api.post<AddResult>(`/gyms/${gymId}/members`, input);
+    const result = await createMember(gymId!, input);
     roster.reload();
     return result;
+  }
+
+  /**
+   * Hands the sign-in details over again for someone who never received them.
+   * The old password is gone — only its hash was kept — so the API mints a new
+   * one, and refuses outright once the member has signed in even once.
+   */
+  async function resendCredentials(row: RosterRow) {
+    setProblem(null);
+    try {
+      const result = await reissueCredentials(gymId!, row.memberId);
+      setFlash(`New password issued for ${result.name}`);
+      setCredentials([result]);
+      roster.reload();
+    } catch (cause: unknown) {
+      // The usual refusal is "they have already signed in", which is worth
+      // reading in full rather than as a failed click.
+      setProblem(messageOf(cause));
+    }
   }
 
   return (
@@ -127,17 +153,23 @@ export function MembersClient() {
                       title={row.name}
                       meta={`${row.plan} · ${row.phone}`}
                       right={
-                        <Pill
-                          tone={
-                            row.daysLeft === 0
-                              ? "hazard"
-                              : row.daysLeft <= 3
-                                ? "token"
-                                : "valid"
-                          }
-                        >
-                          {daysLeftLabel(row.daysLeft)}
-                        </Pill>
+                        <div className="flex items-center gap-2.5">
+                          <ResendCredentials
+                            row={row}
+                            onResend={() => resendCredentials(row)}
+                          />
+                          <Pill
+                            tone={
+                              row.daysLeft === 0
+                                ? "hazard"
+                                : row.daysLeft <= 3
+                                  ? "token"
+                                  : "valid"
+                            }
+                          >
+                            {daysLeftLabel(row.daysLeft)}
+                          </Pill>
+                        </div>
                       }
                     />
                   ))}
@@ -153,6 +185,15 @@ export function MembersClient() {
                 <p className="flex items-center gap-2 text-btn font-bold">
                   <CheckIcon className="size-4 text-valid" />
                   {flash}
+                </p>
+              </Card>
+            )}
+
+            {problem && (
+              <Card className="border-hazard/40 bg-hazard-dim">
+                <p className="flex items-start gap-2 text-sm font-semibold">
+                  <CrossIcon className="mt-0.5 size-4 shrink-0 text-hazard" />
+                  {problem}
                 </p>
               </Card>
             )}
@@ -197,18 +238,66 @@ export function MembersClient() {
    Handover
    ------------------------------------------------------------------ */
 
+/**
+ * The "send their details again" control on a roster row.
+ *
+ * It only appears while the member has never signed in. After that their
+ * password is genuinely their own — the gym cannot see it and has no business
+ * replacing it — so the row says so instead of offering a button.
+ */
+function ResendCredentials({
+  row,
+  onResend,
+}: {
+  row: RosterRow;
+  onResend: () => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  if (row.hasLoggedIn) {
+    return (
+      <span
+        title="They have signed in, so their password is their own"
+        className="hidden text-2xs text-steel-soft sm:inline"
+      >
+        Signed in
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onResend();
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className="text-2xs font-bold tracking-[0.4px] text-hazard uppercase transition-opacity hover:opacity-70 disabled:opacity-50"
+    >
+      {busy ? "Issuing…" : "Resend login"}
+    </button>
+  );
+}
+
 /** The message the desk sends on. Written so it reads on its own in a chat. */
 function handoverNote(row: AddResult): string {
   const lines = [
     `Hi ${row.name.split(" ")[0]}, your gym membership is set up.`,
     "",
     `Plan: ${row.plan}`,
-    `Sign in with your phone number: ${row.phone}`,
+    // The link first: a message that opens with an address is one tap to act on.
+    `Sign in here: ${signInUrl()}`,
+    `Phone number: ${row.phone}`,
   ];
 
   if (row.temporaryPassword) {
     lines.push(`Temporary password: ${row.temporaryPassword}`);
-    lines.push("Please change it after you sign in.");
+    lines.push("You will be asked to pick your own password when you sign in.");
   } else {
     lines.push("Use the password you already have on your account.");
   }
@@ -266,7 +355,7 @@ function CredentialsCard({
                 <p className="text-[15px] font-bold">{row.name}</p>
                 <p className="text-xs text-steel-soft">{row.plan}</p>
               </div>
-              {!row.isNewAccount && (
+              {!row.temporaryPassword && (
                 <span className="shrink-0 rounded-full bg-chalk px-2.5 py-1 text-2xs font-bold tracking-[0.4px] text-steel uppercase">
                   Existing account
                 </span>

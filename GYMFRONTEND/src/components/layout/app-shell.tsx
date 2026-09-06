@@ -53,13 +53,22 @@ export function AppShell({
       return;
     }
 
+    // Backstop for the sign-in redirect: a bookmark or a refresh must not be a
+    // way around replacing a password the front desk chose.
+    if (user.mustChangePassword) {
+      router.replace("/change-password?first=1");
+      return;
+    }
+
     // A front-desk login only owns the scanner.
     if (user.role !== "member" && !canAccessAdmin(user.role)) {
       router.replace(homeRouteFor(user.role));
     }
   }, [status, user, wrongAudience, audience, router]);
 
-  if (status !== "ready" || !user || wrongAudience) return <ShellSkeleton />;
+  if (status !== "ready" || !user || wrongAudience || user.mustChangePassword) {
+    return <ShellSkeleton />;
+  }
 
   return audience === "member" ? (
     <MemberShell name={user.name}>{children}</MemberShell>

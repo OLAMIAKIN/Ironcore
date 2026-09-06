@@ -3,6 +3,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  NotFoundException,
   Param,
   Post,
   Query,
@@ -103,6 +104,8 @@ export class SubscriptionsController {
         phone: dto.phone,
         role: "member",
         passwordHash: await this.passwords.hash(password),
+        // A password a stranger at a desk has read out is not a password.
+        mustChangePassword: true,
       });
     }
 
@@ -130,6 +133,61 @@ export class SubscriptionsController {
       /** False when the number already had an account; then there is no password to hand over. */
       isNewAccount,
       // Shown once, so the desk can pass it on. It is never stored in the clear.
+      temporaryPassword: password,
+    };
+  }
+
+  /**
+   * Re-issues sign-in details for a member who never got them — the message was
+   * lost, or the desk dismissed the card before copying it.
+   *
+   * The original password cannot be shown again: only its hash was kept, which
+   * is the point. So this mints a *new* one, and only while the account has
+   * never been signed into. Once the member has logged in the password is
+   * theirs, the gym has no business seeing it, and this refuses — they change it
+   * from their own account instead.
+   */
+  @Roles("owner", "manager")
+  @Post("gyms/:gymId/members/:memberId/credentials")
+  async reissueCredentials(
+    @Param("gymId") gymId: string,
+    @Param("memberId") memberId: string,
+    @CurrentUser() user: AuthUser,
+  ) {
+    const gym = await this.gyms.requireStaffGym(gymId, user);
+
+    // Scoped through the roster, so one gym cannot mint a password for another
+    // gym's member by guessing an id.
+    const subscription = await this.subscriptions.requireForGym(
+      memberId,
+      gym._id,
+    );
+
+    const member = await this.users.findById(memberId);
+    if (!member || member.role !== "member") {
+      throw new NotFoundException("That member is not on your roster");
+    }
+
+    if (member.lastLoginAt) {
+      throw new ConflictException(
+        `${member.name} has already signed in, so their password is their own. Ask them to sign in and use "Change password".`,
+      );
+    }
+
+    const password = temporaryPassword();
+    member.passwordHash = await this.passwords.hash(password);
+    member.mustChangePassword = true;
+    // Anything issued against the old password stops working.
+    member.tokenVersion += 1;
+    await member.save();
+
+    return {
+      id: member._id.toString(),
+      name: member.name,
+      phone: member.phone,
+      plan: subscription.plan.name,
+      qrToken: subscription.qrToken,
+      isNewAccount: false,
       temporaryPassword: password,
     };
   }

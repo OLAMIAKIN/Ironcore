@@ -27,6 +27,8 @@ export type PublicUser = {
   email?: string;
   role: Role;
   gymId?: string;
+  /** True while they are still on a password a gym's front desk chose for them. */
+  mustChangePassword: boolean;
 };
 
 @Injectable()
@@ -144,6 +146,8 @@ export class AuthService {
     user.passwordHash = await this.passwords.hash(newPassword);
     // Every access token issued before now stops verifying.
     user.tokenVersion += 1;
+    // Whatever the desk handed them is now theirs alone.
+    user.mustChangePassword = false;
     await user.save();
   }
 
@@ -172,6 +176,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       gymId: user.gymId?.toString(),
+      mustChangePassword: user.mustChangePassword === true,
     };
   }
 

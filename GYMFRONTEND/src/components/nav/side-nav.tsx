@@ -53,9 +53,12 @@ export function SideNav({
         <Avatar name={user.name} tone="steel" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[13px] font-semibold">{user.name}</p>
-          <p className="truncate text-2xs tracking-[1px] text-mist-dim uppercase">
-            {user.role}
-          </p>
+          <Link
+            href="/change-password"
+            className="truncate text-2xs tracking-[1px] text-mist-dim uppercase transition-colors hover:text-hazard"
+          >
+            {user.role} · Change password
+          </Link>
         </div>
         <Link
           href="/sign-in"

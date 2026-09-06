@@ -49,6 +49,12 @@ export type OwnerGym = PublicGym & {
     /** Only the last four digits ever leave the server. */
     accountLast4: string;
     verifiedAt?: Date;
+    /**
+     * True when the account was registered with a different payment gateway
+     * than the one now running — its handles are dead and the owner has to add
+     * the account again before the gym can take money.
+     */
+    needsReconnect: boolean;
   };
 };
 
@@ -131,7 +137,7 @@ export class GymsService {
 
   async findForOwner(gymId: string, user: AuthUser): Promise<OwnerGym> {
     const gym = await this.requireStaffGym(gymId, user);
-    return toOwner(gym);
+    return toOwner(gym, this.provider.name);
   }
 
   async update(
@@ -142,7 +148,7 @@ export class GymsService {
     const gym = await this.requireStaffGym(gymId, user);
     Object.assign(gym, dto);
     await gym.save();
-    return toOwner(gym);
+    return toOwner(gym, this.provider.name);
   }
 
   listBanks() {
@@ -186,11 +192,14 @@ export class GymsService {
       accountName,
       subaccountCode: handles.subaccountCode,
       recipientCode: handles.recipientCode,
+      // Stamped so a later switch of gateway can be spotted rather than
+      // discovered as a failed payment.
+      provider: this.provider.name,
       verifiedAt: new Date(),
     };
     await gym.save();
 
-    return toOwner(gym);
+    return toOwner(gym, this.provider.name);
   }
 
   /** Called by payments once a listing payment succeeds. */
@@ -263,7 +272,7 @@ function toPublic(gym: Gym & { _id: Types.ObjectId }): PublicGym {
   };
 }
 
-function toOwner(gym: GymDocument): OwnerGym {
+function toOwner(gym: GymDocument, provider: string): OwnerGym {
   return {
     ...toPublic(gym),
     status: gym.status,
@@ -282,7 +291,20 @@ function toOwner(gym: GymDocument): OwnerGym {
           accountName: gym.settlementAccount.accountName,
           accountLast4: gym.settlementAccount.accountNumber.slice(-4),
           verifiedAt: gym.settlementAccount.verifiedAt,
+          needsReconnect: !settlementMatchesProvider(gym, provider),
         }
       : undefined,
   };
+}
+
+/**
+ * Whether the stored payout handles were issued by the gateway now in use.
+ * Accounts saved before the issuer was recorded are treated as stale, because
+ * that is exactly the case this check exists to catch.
+ */
+export function settlementMatchesProvider(
+  gym: Pick<GymDocument, "settlementAccount">,
+  provider: string,
+): boolean {
+  return gym.settlementAccount?.provider === provider;
 }
