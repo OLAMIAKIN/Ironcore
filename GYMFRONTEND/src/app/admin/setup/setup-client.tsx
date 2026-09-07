@@ -237,8 +237,8 @@ function DayPassCard({
     setSaved(false);
 
     const next = Number(value);
-    if (next < 500 || next > 200000) {
-      setError("Day passes run between ₦500 and ₦200,000");
+    if (next < 100 || next > 200000) {
+      setError("Day passes run between ₦100 and ₦200,000");
       return;
     }
 

@@ -299,6 +299,17 @@ export function saveSettlementAccount(
   });
 }
 
+/**
+ * The member turning renewal on or off for one gym. It starts off: a recurring
+ * charge is something you ask for, not something you discover.
+ */
+export function setAutoRenew(subscriptionId: string, autoRenew: boolean) {
+  return api.patch<{ id: string; autoRenew: boolean }>(
+    `/me/subscriptions/${subscriptionId}/auto-renew`,
+    { autoRenew },
+  );
+}
+
 export function scanToken(gymId: string, token: string) {
   return api.post<ScanResult>(`/gyms/${gymId}/checkins/scan`, { token });
 }

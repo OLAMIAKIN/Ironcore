@@ -1,10 +1,14 @@
+"use client";
+
+import { useState } from "react";
 import { ArrowRightIcon } from "@/components/icons";
 import { ButtonLink } from "@/components/ui/button";
 import { DarkCard } from "@/components/ui/card";
 import { Pill, type PillTone } from "@/components/ui/pill";
 import { QrCode } from "@/components/ui/qr-code";
+import { cn } from "@/lib/cn";
 import { daysLeftLabel } from "@/lib/format";
-import type { MemberSubscription } from "@/lib/domain";
+import { setAutoRenew, type MemberSubscription } from "@/lib/domain";
 
 const STATUS: Record<string, { tone: PillTone; label: string }> = {
   active: { tone: "valid", label: "Active" },
@@ -20,8 +24,11 @@ const STATUS: Record<string, { tone: PillTone; label: string }> = {
  */
 export function MembershipCard({
   membership,
+  onChanged,
 }: {
   membership: MemberSubscription;
+  /** Refetches the memberships once a setting on this card has been saved. */
+  onChanged?: () => void;
 }) {
   const { gym, plan, daysLeft, autoRenew, qrToken } = membership;
 
@@ -64,8 +71,12 @@ export function MembershipCard({
               <dt className="text-2xs font-semibold tracking-[1px] text-mist-dim uppercase">
                 Auto-renew
               </dt>
-              <dd className="mt-1 font-mono text-sm font-bold">
-                {autoRenew ? "On" : "Off"}
+              <dd className="mt-1">
+                <AutoRenewToggle
+                  subscriptionId={membership.id}
+                  on={autoRenew}
+                  onChanged={onChanged}
+                />
               </dd>
             </div>
           </dl>
@@ -93,5 +104,73 @@ export function MembershipCard({
         </div>
       </div>
     </DarkCard>
+  );
+}
+
+/**
+ * Renewal is the member's own choice, so it is a control rather than a label.
+ * The new value shows the moment it is pressed and rolls back if the save
+ * fails — nobody should be left unsure whether they are on a recurring charge.
+ */
+function AutoRenewToggle({
+  subscriptionId,
+  on,
+  onChanged,
+}: {
+  subscriptionId: string;
+  on: boolean;
+  onChanged?: () => void;
+}) {
+  const [pending, setPending] = useState<boolean | null>(null);
+  const [failed, setFailed] = useState(false);
+  const shown = pending ?? on;
+
+  async function toggle() {
+    const next = !shown;
+    setPending(next);
+    setFailed(false);
+    try {
+      await setAutoRenew(subscriptionId, next);
+      onChanged?.();
+    } catch {
+      setPending(null);
+      setFailed(true);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={shown}
+        aria-label="Renew this membership automatically"
+        onClick={() => void toggle()}
+        className="flex items-center gap-2.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-hazard"
+      >
+        <span
+          aria-hidden
+          className={cn(
+            "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+            shown ? "bg-valid" : "bg-white/25",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-0.5 size-4 rounded-full bg-white transition-all",
+              shown ? "left-[18px]" : "left-0.5",
+            )}
+          />
+        </span>
+        <span className="font-mono text-sm font-bold">
+          {shown ? "On" : "Off"}
+        </span>
+      </button>
+      {failed && (
+        <span role="alert" className="mt-1 block text-2xs text-hazard">
+          Could not save — try again
+        </span>
+      )}
+    </>
   );
 }

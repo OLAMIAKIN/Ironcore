@@ -37,7 +37,7 @@ const ACTIVE_GYM_KEY = "ironcore.activeGym";
 /** The member's own screen: their code, their cover, and what to do next. */
 export function HomeClient() {
   const { user } = useSession();
-  const { data, loading, error } = useMySubscriptions();
+  const { data, loading, error, reload } = useMySubscriptions();
 
   const memberships = data?.items ?? [];
 
@@ -82,7 +82,10 @@ export function HomeClient() {
                 onSelect={chooseGym}
               />
 
-              <MembershipCard membership={primary} />
+              <MembershipCard
+                membership={primary}
+                onChanged={() => reload()}
+              />
 
               <Section title="Your cover" className="mt-6 lg:mt-8">
                 <StatGrid columns={4}>

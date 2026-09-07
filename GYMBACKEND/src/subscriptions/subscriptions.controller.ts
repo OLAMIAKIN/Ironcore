@@ -5,6 +5,7 @@ import {
   Get,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
 } from "@nestjs/common";
@@ -18,7 +19,7 @@ import type { AuthUser } from "@/common/types";
 import { GymsService } from "@/gyms/gyms.service";
 import { ReportsService } from "@/transactions/reports.service";
 import { SubscriptionsService } from "@/subscriptions/subscriptions.service";
-import { AddMemberDto } from "@/subscriptions/dto/member.dto";
+import { AddMemberDto, SetAutoRenewDto } from "@/subscriptions/dto/member.dto";
 import { PasswordService } from "@/auth/password.service";
 import { PlansService } from "@/plans/plans.service";
 import { User, type UserDocument } from "@/users/schemas/user.schema";
@@ -39,6 +40,24 @@ export class SubscriptionsController {
   @Get("me/subscriptions")
   async mine(@CurrentUser() user: AuthUser) {
     return { items: await this.subscriptions.listForMember(user.id) };
+  }
+
+  /**
+   * The member turning renewal on or off for one of their gyms. Scoped to the
+   * signed-in member, so an id from someone else's account finds nothing.
+   */
+  @Roles("member")
+  @Patch("me/subscriptions/:id/auto-renew")
+  async setAutoRenew(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body() dto: SetAutoRenewDto,
+  ) {
+    const subscription = await this.subscriptions.requireForMember(id, user.id);
+    subscription.autoRenew = dto.autoRenew;
+    await subscription.save();
+
+    return { id: subscription._id.toString(), autoRenew: subscription.autoRenew };
   }
 
   /** A member's own receipts — their money, so their split is shown. */

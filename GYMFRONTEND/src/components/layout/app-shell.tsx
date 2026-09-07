@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, type ReactNode } from "react";
-import { BarbellIcon, LogOutIcon } from "@/components/icons";
+import { BarbellIcon, LockIcon, LogOutIcon } from "@/components/icons";
 import { BottomNav } from "@/components/nav/bottom-nav";
 import {
   canAccessAdmin,
@@ -94,6 +94,7 @@ function MemberShell({
       items={MEMBER_NAV}
       brand={home ? `${home.name} — ${home.branch}` : "IronCore"}
       user={{ name, role: "Member" }}
+      signInHref="/sign-in"
     >
       {children}
     </Shell>
@@ -117,6 +118,7 @@ function StaffShell({
       items={STAFF_NAV[role]}
       brand={data ? `${data.name} — ${data.branch}` : "Your gym"}
       user={{ name, role: ROLE_LABELS[role] }}
+      signInHref="/gym/sign-in"
     >
       {children}
     </Shell>
@@ -127,19 +129,27 @@ function Shell({
   items,
   brand,
   user,
+  signInHref,
   children,
 }: {
   items: React.ComponentProps<typeof SideNav>["items"];
   brand: string;
   user: { name: string; role: string };
+  /** Staff sign back in at their own door, members at theirs. */
+  signInHref: string;
   children: ReactNode;
 }) {
   return (
     <div className="flex min-h-dvh">
-      <SideNav items={items} brand={brand} user={user} />
+      <SideNav
+        items={items}
+        brand={brand}
+        user={user}
+        signInHref={signInHref}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <MobileTopBar />
+        <MobileTopBar signInHref={signInHref} />
         <main className="flex-1 pb-28 md:pb-14">{children}</main>
         <BottomNav items={items} />
       </div>
@@ -147,8 +157,11 @@ function Shell({
   );
 }
 
-/** Phone-only brand bar — the rail is hidden at this width. */
-function MobileTopBar() {
+/**
+ * Phone-only brand bar — the rail is hidden at this width, so the account
+ * actions that live in it have to appear here instead.
+ */
+function MobileTopBar({ signInHref }: { signInHref: string }) {
   const router = useRouter();
 
   return (
@@ -161,17 +174,28 @@ function MobileTopBar() {
           IronCore
         </span>
       </Link>
-      <button
-        type="button"
-        onClick={async () => {
-          await signOut();
-          router.replace("/sign-in");
-        }}
-        className="flex items-center gap-1.5 text-micro font-semibold tracking-[1px] text-steel-soft uppercase"
-      >
-        <LogOutIcon className="size-4" />
-        Sign out
-      </button>
+
+      <div className="flex items-center gap-4">
+        <Link
+          href="/change-password"
+          aria-label="Change password"
+          title="Change password"
+          className="text-steel-soft transition-colors hover:text-hazard"
+        >
+          <LockIcon className="size-[18px]" />
+        </Link>
+        <button
+          type="button"
+          onClick={async () => {
+            await signOut();
+            router.replace(signInHref);
+          }}
+          className="flex items-center gap-1.5 text-micro font-semibold tracking-[1px] text-steel-soft uppercase"
+        >
+          <LogOutIcon className="size-4" />
+          Sign out
+        </button>
+      </div>
     </header>
   );
 }

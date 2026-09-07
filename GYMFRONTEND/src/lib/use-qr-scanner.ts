@@ -18,14 +18,16 @@ export type ScannerState =
   | "starting"
   /** Frames are being read. */
   | "scanning"
+  /**
+   * A code was read and the camera is deliberately not looking any more. The
+   * stream stays open so the next person does not wait for it to warm up again.
+   */
+  | "paused"
   /** The user said no, or the browser is blocking the camera. */
   | "denied"
   /** No camera API here — an insecure origin, or a device without one. */
   | "unavailable"
   | "error";
-
-/** The same code stays in front of the lens for seconds; only read it once. */
-const REPEAT_WINDOW_MS = 4000;
 
 /** Frames are cheap to grab but not to decode. Roughly ten looks a second. */
 const DECODE_INTERVAL_MS = 100;
@@ -38,6 +40,10 @@ export type QrScanner = {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   start: () => void;
   stop: () => void;
+  /** Stop reading frames but keep the camera on. */
+  pause: () => void;
+  /** Look again, after a pause. */
+  resume: () => void;
 };
 
 export function useQrScanner(onDetect: (value: string) => void): QrScanner {
@@ -56,7 +62,13 @@ export function useQrScanner(onDetect: (value: string) => void): QrScanner {
     detectRef.current = onDetect;
   }, [onDetect]);
 
-  const lastHit = useRef<{ value: string; at: number } | null>(null);
+  /**
+   * Set the moment a code is read, and cleared only by `resume`. A card sits in
+   * front of the lens for seconds after it is scanned, and ten looks a second
+   * would otherwise re-read it over and over — so one read closes the door
+   * until the desk says go again.
+   */
+  const pausedRef = useRef(false);
 
   /**
    * Bumped by every start and stop. The permission prompt is open for as long
@@ -78,9 +90,25 @@ export function useQrScanner(onDetect: (value: string) => void): QrScanner {
     const video = videoRef.current;
     if (video) video.srcObject = null;
 
-    lastHit.current = null;
+    pausedRef.current = false;
     setState("idle");
     setMessage(null);
+  }, []);
+
+  /**
+   * Stops reading without dropping the stream. The verdict for the code just
+   * read stays on screen until the desk waves the next person through.
+   */
+  const pause = useCallback(() => {
+    if (!streamRef.current) return;
+    pausedRef.current = true;
+    setState("paused");
+  }, []);
+
+  const resume = useCallback(() => {
+    if (!streamRef.current) return;
+    pausedRef.current = false;
+    setState("scanning");
   }, []);
 
   const start = useCallback(() => {
@@ -149,6 +177,7 @@ export function useQrScanner(onDetect: (value: string) => void): QrScanner {
         const tick = (now: number) => {
           frameRef.current = requestAnimationFrame(tick);
 
+          if (pausedRef.current) return;
           if (now - lastDecode < DECODE_INTERVAL_MS) return;
           lastDecode = now;
 
@@ -167,16 +196,10 @@ export function useQrScanner(onDetect: (value: string) => void): QrScanner {
           const value = found?.data.trim();
           if (!value) return;
 
-          const previous = lastHit.current;
-          if (
-            previous &&
-            previous.value === value &&
-            Date.now() - previous.at < REPEAT_WINDOW_MS
-          ) {
-            return;
-          }
-
-          lastHit.current = { value, at: Date.now() };
+          // One read per press of "Scan next". Without this the same card in
+          // front of the lens is read ten times a second.
+          pausedRef.current = true;
+          setState("paused");
           detectRef.current(value);
         };
 
@@ -213,5 +236,5 @@ export function useQrScanner(onDetect: (value: string) => void): QrScanner {
   // Never leave the camera light on behind a navigation.
   useEffect(() => stop, [stop]);
 
-  return { state, message, videoRef, start, stop };
+  return { state, message, videoRef, start, stop, pause, resume };
 }

@@ -31,7 +31,7 @@ export class UpdateGymDto {
 
   @IsOptional()
   @IsInt()
-  @Min(500)
+  @Min(100)
   @Max(200000)
   dayPassPrice?: number;
 

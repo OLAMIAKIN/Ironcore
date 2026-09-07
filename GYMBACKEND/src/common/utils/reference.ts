@@ -27,13 +27,14 @@ export function paymentReference(prefix: string): string {
  * Member check-in codes and guest tokens.
  *
  * These get read off a cracked phone screen and typed into the door terminal by
- * hand, so they are short and drawn from the same unambiguous alphabet as a
- * one-time password. Eight characters over 31 symbols is about 8.5e11 codes —
- * far past anything the door's rate limit would let through, and a third
- * shorter than the hex it replaces.
+ * hand, so they are kept as short as the job allows: six characters over 31
+ * unambiguous symbols is about 890 million codes. That is a small keyspace by
+ * cryptographic standards and a vast one for this door — a guess has to come
+ * from a signed-in staff account, against one named gym, through the rate
+ * limiter, and lands on a code that expires.
  */
 export function accessToken(prefix: string): string {
-  return `${prefix.toUpperCase()}-${readableCode(8)}`;
+  return `${prefix.toUpperCase()}-${readableCode(6)}`;
 }
 
 /**

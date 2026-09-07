@@ -71,8 +71,10 @@ export class RegisterGymDto extends PhoneAndPassword {
   @MaxLength(80)
   area!: string;
 
+  // Floor is deliberately low so a gym can price a demo or a promo run at a
+  // token amount; the ceiling is what stops a typo becoming a real charge.
   @IsInt()
-  @Min(500)
+  @Min(100)
   @Max(200000)
   dayPassPrice!: number;
 

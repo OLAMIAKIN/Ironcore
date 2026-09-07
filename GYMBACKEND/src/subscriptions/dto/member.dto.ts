@@ -1,5 +1,6 @@
 import { Transform } from "class-transformer";
 import {
+  IsBoolean,
   IsInt,
   IsMongoId,
   IsOptional,
@@ -38,4 +39,10 @@ export class AddMemberDto {
   @Min(1)
   @Max(1095)
   daysLeft?: number;
+}
+
+/** The member turning their own renewal on or off. */
+export class SetAutoRenewDto {
+  @IsBoolean()
+  autoRenew!: boolean;
 }

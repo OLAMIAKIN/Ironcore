@@ -43,7 +43,11 @@ export class Subscription {
   @Prop({ index: true })
   expiresAt?: Date;
 
-  @Prop({ default: true })
+  /**
+   * Off unless the member asks for it. Nobody should discover they signed up
+   * for a recurring charge because a default was set for them.
+   */
+  @Prop({ default: false })
   autoRenew!: boolean;
 
   /** What the member shows at the door. Rotated if it ever leaks. */

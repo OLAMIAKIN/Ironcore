@@ -92,6 +92,15 @@ export function ScannerClient() {
 
   const camera = useQrScanner(onDetect);
 
+  /** Clears the last verdict and lets the camera look again. */
+  function scanNext() {
+    setResult(null);
+    setReminderSent(false);
+    setToken("");
+    setError(null);
+    camera.resume();
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void scan(token);
@@ -102,6 +111,8 @@ export function ScannerClient() {
     setReminderSent(false);
     setToken("");
     setError(null);
+    // A manual reset is also a "ready for the next one", if the camera is on.
+    camera.resume();
   }
 
   return (
@@ -124,7 +135,7 @@ export function ScannerClient() {
           or the battery is dead.
         </p>
 
-        <CameraControls camera={camera} />
+        <CameraControls camera={camera} onScanNext={scanNext} />
 
         <form onSubmit={handleSubmit} className="mt-5">
           <label
@@ -230,11 +241,32 @@ export function ScannerClient() {
  * appears in response to one, and a desk that has already been asked once
  * should not be re-prompted every time this screen mounts.
  */
-function CameraControls({ camera }: { camera: QrScanner }) {
-  const live = camera.state === "scanning" || camera.state === "starting";
+function CameraControls({
+  camera,
+  onScanNext,
+}: {
+  camera: QrScanner;
+  onScanNext: () => void;
+}) {
+  const live =
+    camera.state === "scanning" ||
+    camera.state === "starting" ||
+    camera.state === "paused";
 
   return (
-    <div className="mt-4">
+    <div className="mt-4 space-y-2.5">
+      {/*
+        After a read the camera stops looking, so the verdict on screen stays
+        put and the same card is not waved through twice. The desk decides when
+        the next person is ready.
+      */}
+      {camera.state === "paused" && (
+        <Button type="button" onClick={onScanNext}>
+          <ScanIcon className="size-[18px]" />
+          Scan next person
+        </Button>
+      )}
+
       <Button
         type="button"
         variant={live ? "ghost" : "primary"}
@@ -248,7 +280,7 @@ function CameraControls({ camera }: { camera: QrScanner }) {
         <ScanIcon className="size-[18px]" />
         {camera.state === "starting"
           ? "Waiting for camera…"
-          : camera.state === "scanning"
+          : live
             ? "Stop camera"
             : "Start camera"}
       </Button>
@@ -278,6 +310,9 @@ function GateScene({
   gymName: string;
 }) {
   const allowed = result?.allowed ?? false;
+  // The stream is on screen while scanning and while paused; only the decoding
+  // stops between people, so the viewfinder should not blink out.
+  const on = cameraState === "scanning" || cameraState === "paused";
   const live = cameraState === "scanning";
 
   return (
@@ -302,7 +337,7 @@ function GateScene({
             ? allowed
               ? "border-valid text-valid"
               : "border-hazard text-hazard"
-            : live
+            : on
               ? "border-solid border-hazard text-mist"
               : "border-dashed border-steel text-slate-dim",
         )}
@@ -318,7 +353,7 @@ function GateScene({
           muted
           className={cn(
             "absolute inset-0 size-full object-cover",
-            live ? "opacity-100" : "opacity-0",
+            on ? "opacity-100" : "opacity-0",
             result && "opacity-25",
           )}
         />
@@ -335,6 +370,10 @@ function GateScene({
         ) : live ? (
           <span className="relative rounded-lg bg-ink/70 px-2.5 py-1.5 text-mist">
             Hold the code steady
+          </span>
+        ) : cameraState === "paused" ? (
+          <span className="relative rounded-lg bg-ink/70 px-2.5 py-1.5 text-mist">
+            Press &ldquo;Scan next person&rdquo;
           </span>
         ) : cameraState === "starting" ? (
           "Waiting for camera…"
@@ -358,7 +397,12 @@ function GateScene({
           </>
         ) : (
           <p className="text-[13px] text-mist-dim">
-            {gymName} · {live ? "scanning" : "ready to scan"}
+            {gymName} ·{" "}
+            {live
+              ? "scanning"
+              : cameraState === "paused"
+                ? "paused"
+                : "ready to scan"}
           </p>
         )}
       </div>

@@ -69,8 +69,8 @@ function validateGym(fields: Fields): Errors {
 
   const price = Number(fields.dayPassPrice);
   if (!price) errors.dayPassPrice = "Set a day pass price";
-  else if (price < 500 || price > 200000)
-    errors.dayPassPrice = "Day passes must be between ₦500 and ₦200,000";
+  else if (price < 100 || price > 200000)
+    errors.dayPassPrice = "Day passes must be between ₦100 and ₦200,000";
 
   return errors;
 }
