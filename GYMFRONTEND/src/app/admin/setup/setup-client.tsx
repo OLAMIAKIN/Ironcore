@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { BankIcon, CheckIcon } from "@/components/icons";
+import dynamic from "next/dynamic";
+import { BankIcon, CheckIcon, MapPinIcon } from "@/components/icons";
 import {
   Container,
   Helper,
@@ -17,8 +18,19 @@ import { ListItem } from "@/components/ui/list-item";
 import { Pill } from "@/components/ui/pill";
 import { messageOf } from "@/lib/api";
 import { naira } from "@/lib/format";
+import { usePosition } from "@/lib/use-position";
+
+/** Leaflet reaches for `window` as it loads, so it never runs on the server. */
+const GymMap = dynamic(
+  () => import("@/components/map/gym-map").then((mod) => mod.GymMap),
+  {
+    ssr: false,
+    loading: () => <div className="h-[200px] animate-pulse rounded-card bg-chalk" />,
+  },
+);
 import {
   createPlan,
+  geocodeAddress,
   resolveAccount,
   retirePlan,
   saveSettlementAccount,
@@ -26,6 +38,7 @@ import {
   useBanks,
   useMyGym,
   usePlans,
+  type GeocodeHit,
 } from "@/lib/domain";
 
 /** Pricing, plans and the account the gym's share is settled to. */
@@ -104,6 +117,12 @@ export function SetupClient() {
             <DayPassCard
               gymId={gymId}
               price={gym.data?.dayPassPrice}
+              onSaved={() => gym.reload()}
+            />
+            <LocationCard
+              gymId={gymId}
+              lat={gym.data?.lat}
+              lng={gym.data?.lng}
               onSaved={() => gym.reload()}
             />
             <SettlementCard
@@ -454,6 +473,200 @@ function SettlementCard({
             </Button>
           )}
         </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Where the gym is. Until this is set the gym is missing from "gyms near me"
+ * entirely — it has no position, so no honest distance can be shown for it.
+ *
+ * Two ways in, because gyms are set up both ways: an owner standing in their
+ * own reception presses the button, and one doing paperwork at home drops the
+ * pin by hand.
+ */
+function LocationCard({
+  gymId,
+  lat,
+  lng,
+  onSaved,
+}: {
+  gymId: string | undefined;
+  lat?: number;
+  lng?: number;
+  onSaved: () => void;
+}) {
+  const here = usePosition();
+  const [draft, setDraft] = useState<{ lat: number; lng: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Address search: the usual way in, since an owner doing paperwork at home is
+  // nowhere near the gym they are describing.
+  const [address, setAddress] = useState("");
+  const [hits, setHits] = useState<GeocodeHit[] | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  async function lookUp() {
+    if (address.trim().length < 3) return;
+    setSearching(true);
+    setError(null);
+    try {
+      const { items } = await geocodeAddress(address.trim());
+      setHits(items);
+    } catch (cause: unknown) {
+      setError(messageOf(cause));
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  // What the map shows: an unsaved pin first, then whatever is stored, then a
+  // fix from the browser if the owner just asked for one.
+  const pin =
+    draft ??
+    (lat !== undefined && lng !== undefined ? { lat, lng } : null) ??
+    here.position;
+
+  const dirty =
+    pin !== null && (pin.lat !== lat || pin.lng !== lng);
+
+  async function save() {
+    if (!pin) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateGym(gymId!, { lat: pin.lat, lng: pin.lng });
+      setDraft(null);
+      onSaved();
+    } catch (cause: unknown) {
+      setError(messageOf(cause));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card>
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="font-display text-[19px] tracking-[0.3px]">
+          Map location
+        </h2>
+        {lat !== undefined ? (
+          <Pill tone="valid">On the map</Pill>
+        ) : (
+          <Pill tone="token">Not set</Pill>
+        )}
+      </div>
+
+      <Helper className="mt-1 mb-3">
+        {lat !== undefined
+          ? "Members see this pin, and how far they are from it."
+          : "Until you set this, your gym is missing from “gyms near me”."}
+      </Helper>
+
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void lookUp();
+        }}
+      >
+        <InputField
+          label="Search an address"
+          placeholder="Street, area or landmark"
+          value={address}
+          onChange={(event) => setAddress(event.target.value)}
+        />
+        <Button type="submit" variant="ghost" disabled={searching}>
+          {searching ? "Looking up…" : "Find on the map"}
+        </Button>
+      </form>
+
+      {hits !== null && (
+        <div className="mt-3">
+          {hits.length === 0 ? (
+            <Helper>
+              Nothing matched that. Try a nearby landmark or main street, or tap
+              the map below.
+            </Helper>
+          ) : (
+            <ul className="divide-y divide-line-soft">
+              {hits.map((hit) => (
+                <li key={`${hit.lat},${hit.lng}`}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft({ lat: hit.lat, lng: hit.lng });
+                      setHits(null);
+                    }}
+                    className="w-full py-2.5 text-left text-helper text-steel hover:text-ink"
+                  >
+                    {hit.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <div className="mt-3">
+        <GymMap
+          pins={
+            pin
+              ? [
+                  {
+                    id: "gym",
+                    lat: pin.lat,
+                    lng: pin.lng,
+                    label: "Your gym",
+                    active: true,
+                  },
+                ]
+              : []
+          }
+          onPick={(at) => setDraft(at)}
+          className="h-[200px]"
+        />
+      </div>
+
+      <Helper className="mt-2">
+        Tap the map to nudge the pin exactly where the door is.
+      </Helper>
+
+      <div className="mt-3 space-y-2.5">
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => {
+            setDraft(null);
+            here.locate();
+          }}
+          disabled={here.state === "locating"}
+        >
+          <MapPinIcon className="size-4" />
+          {here.state === "locating"
+            ? "Finding you…"
+            : "I am at the gym now"}
+        </Button>
+
+        {dirty && (
+          <Button type="button" onClick={() => void save()} disabled={saving}>
+            {saving ? "Saving…" : "Save this spot"}
+          </Button>
+        )}
+      </div>
+
+      {here.message && (
+        <p role="status" className="mt-2.5 text-xs font-medium text-hazard">
+          {here.message}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="mt-2.5 text-xs font-medium text-hazard">
+          {error}
+        </p>
       )}
     </Card>
   );

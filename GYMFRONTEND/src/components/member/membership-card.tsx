@@ -36,12 +36,18 @@ export function MembershipCard({
   // subscribe screen would have guessed at.
 
   // "Expiring" is a reading of the clock, not a state the API stores.
-  const key =
-    membership.status === "active" && daysLeft <= 5 ? "expiring" : membership.status;
+  const expiring = membership.status === "active" && daysLeft <= 5;
+  const key = expiring ? "expiring" : membership.status;
   const badge = STATUS[key] ?? STATUS.active!;
 
+  // The last five days, and anything already lapsed, are worth noticing from
+  // across the room — this is the screen someone glances at on the way in.
+  const urgent = expiring || daysLeft === 0;
+
   return (
-    <DarkCard className="lg:p-8">
+    <DarkCard
+      className={cn("lg:p-8", urgent && "border-2 expiring-soon")}
+    >
       <div className="grid gap-6 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-8 lg:gap-12">
         <div className="min-w-0">
           <div className="flex items-start justify-between gap-3">
@@ -63,7 +69,12 @@ export function MembershipCard({
               <dt className="text-2xs font-semibold tracking-[1px] text-mist-dim uppercase">
                 Time left
               </dt>
-              <dd className="mt-1 font-mono text-sm font-bold">
+              <dd
+                className={cn(
+                  "mt-1 font-mono text-sm font-bold",
+                  urgent && "text-hazard",
+                )}
+              >
                 {daysLeftLabel(daysLeft)}
               </dd>
             </div>
@@ -80,6 +91,16 @@ export function MembershipCard({
               </dd>
             </div>
           </dl>
+
+          {/* Said in words as well as colour — the glow is not readable by
+              everyone, and is absent entirely under reduced motion. */}
+          {urgent && (
+            <p role="status" className="mt-4 text-[13px] font-semibold text-hazard">
+              {daysLeft === 0
+                ? "Your cover has run out — renew to get back in."
+                : `Only ${daysLeftLabel(daysLeft)} left. Renew before it lapses.`}
+            </p>
+          )}
 
           <ButtonLink
             href={`/subscribe?gym=${gym.id}`}

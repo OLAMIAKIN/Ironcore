@@ -12,11 +12,13 @@ import { Throttle } from "@nestjs/throttler";
 import { CurrentUser } from "@/common/decorators/current-user.decorator";
 import { Public } from "@/common/decorators/public.decorator";
 import { Roles } from "@/common/decorators/roles.decorator";
-import { PaginationQuery } from "@/common/dto/pagination.dto";
 import type { AuthUser } from "@/common/types";
 import { LISTING_PLANS } from "@/gyms/listing-plans";
 import { GymsService } from "@/gyms/gyms.service";
+import { GeocodingService } from "@/gyms/geocoding.service";
 import {
+  FindGymsQuery,
+  GeocodeQuery,
   ResolveAccountDto,
   SetSettlementAccountDto,
   UpdateGymDto,
@@ -24,13 +26,28 @@ import {
 
 @Controller()
 export class GymsController {
-  constructor(private readonly gyms: GymsService) {}
+  constructor(
+    private readonly gyms: GymsService,
+    private readonly geocoding: GeocodingService,
+  ) {}
 
   /** Discover. Anyone can browse gyms without an account. */
   @Public()
   @Get("gyms")
-  list(@Query() query: PaginationQuery) {
+  list(@Query() query: FindGymsQuery) {
     return this.gyms.findPublic(query);
+  }
+
+  /**
+   * Address to coordinates, for an owner placing their gym without standing in
+   * it. Staff only and rate-limited: it is a paid-for-by-goodwill public
+   * geocoder behind this, not something to leave open to the world.
+   */
+  @Roles("owner", "manager")
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  @Get("geocode")
+  async geocode(@Query() query: GeocodeQuery) {
+    return { items: await this.geocoding.search(query.q) };
   }
 
   @Public()

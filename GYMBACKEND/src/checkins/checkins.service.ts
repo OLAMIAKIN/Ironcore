@@ -18,6 +18,12 @@ export type ScanResult = {
   kind: "member" | "day_pass" | "unknown";
   /** True when paying would fix it — the front desk can offer a renewal. */
   offerRenewal?: boolean;
+  /**
+   * Who to chase, when a renewal would fix it. There is no email or SMS gateway
+   * wired up, so the desk contacts them directly — which means the desk needs
+   * the number in front of it. Only ever filled in for this gym's own member.
+   */
+  contact?: { name: string; phone: string };
 };
 
 /**
@@ -62,6 +68,7 @@ export class CheckInsService {
       detail: result.detail,
       kind: result.kind,
       offerRenewal: result.offerRenewal,
+      contact: result.contact,
     };
   }
 
@@ -89,6 +96,9 @@ export class CheckInsService {
           detail: `${who} · plan has run out`,
           kind: "member",
           offerRenewal: true,
+          contact: member?.phone
+            ? { name: who, phone: member.phone }
+            : undefined,
           who,
           memberId: subscription.memberId,
         };

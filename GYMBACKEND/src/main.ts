@@ -1,16 +1,6 @@
-import * as dns from "dns";
+// Must come before anything that opens a database connection.
+import "@/config/dns";
 import "reflect-metadata";
-
-/**
- * A local workaround, not a production setting: some home and office networks
- * run a resolver that cannot answer Atlas's SRV records, which makes the
- * connection string fail to resolve. A hosting platform resolves its own
- * private names through its own DNS, so overriding it there would break more
- * than it fixes.
- */
-if (process.env.NODE_ENV !== "production") {
-  dns.setServers(["8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1"]);
-}
 import { Logger, ValidationPipe } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { NestFactory } from "@nestjs/core";

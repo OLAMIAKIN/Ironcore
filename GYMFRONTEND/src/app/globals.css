@@ -97,6 +97,35 @@
   }
 }
 
+/* A membership in its last few days. The card breathes a red glow rather than
+   blinking: a hard flash is hard to read behind, and is exactly the pattern
+   that triggers photosensitive reactions. Anyone who has asked their system for
+   less motion gets a plain steady ring instead. */
+@utility expiring-soon {
+  animation: urgent-glow 1.8s ease-in-out infinite;
+}
+
+@keyframes urgent-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 90, 54, 0);
+    border-color: color-mix(in srgb, var(--color-hazard) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(255, 90, 54, 0.16);
+    border-color: var(--color-hazard);
+  }
+}
+
+/* Plain rule, not a @utility: those cannot be nested in a media query, and
+   being unlayered this also wins over the utilities layer above. */
+@media (prefers-reduced-motion: reduce) {
+  .expiring-soon {
+    animation: none;
+    border-color: var(--color-hazard);
+  }
+}
+
 /* Sidebar rail on dark: the hazard stripe that marks the active section. */
 @utility nav-rail {
   background: repeating-linear-gradient(

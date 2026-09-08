@@ -6,7 +6,7 @@ import { BarbellIcon, LockIcon, LogOutIcon } from "@/components/icons";
 import { signOut } from "@/lib/session";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/cn";
-import { isActive, type NavItem } from "./nav-config";
+import { isActive, SIGN_IN, type NavItem } from "./nav-config";
 
 /**
  * Persistent rail for tablet and up. It replaces the phone tab bar rather than
@@ -16,14 +16,11 @@ export function SideNav({
   items,
   brand,
   user,
-  signInHref,
 }: {
   items: NavItem[];
   /** The gym this session belongs to, shown under the wordmark. */
   brand: string;
   user: { name: string; role: string };
-  /** Where signing out lands — members and staff have their own door. */
-  signInHref: string;
 }) {
   const pathname = usePathname();
 
@@ -64,7 +61,7 @@ export function SideNav({
             pathname={pathname}
             tone="quiet"
           />
-          <SignOutButton signInHref={signInHref} />
+          <SignOutButton />
         </div>
       </nav>
 
@@ -91,8 +88,12 @@ const CHANGE_PASSWORD: NavItem = {
 /**
  * Signing out is an action, not a destination, so it is a button — but it is
  * dressed as a nav row so the group reads as one list.
+ *
+ * It lands on the main sign-in page whoever was signed in. That page accepts a
+ * staff number just as happily as a member's and routes on the account's own
+ * role, so there is one front door to remember rather than two.
  */
-function SignOutButton({ signInHref }: { signInHref: string }) {
+function SignOutButton() {
   const router = useRouter();
 
   return (
@@ -100,7 +101,7 @@ function SignOutButton({ signInHref }: { signInHref: string }) {
       type="button"
       onClick={async () => {
         await signOut();
-        router.replace(signInHref);
+        router.replace(SIGN_IN);
       }}
       className="flex w-full items-center gap-3 rounded-ctl px-3 py-2.5 text-left text-mist-dim transition-colors hover:bg-white/5 hover:text-hazard"
     >

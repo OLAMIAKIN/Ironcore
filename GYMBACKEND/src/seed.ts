@@ -1,3 +1,6 @@
+// Same resolver workaround the API uses; without it the seed cannot reach
+// Atlas on a network whose DNS will not answer SRV lookups.
+import "@/config/dns";
 import "reflect-metadata";
 import { Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";

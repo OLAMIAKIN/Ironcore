@@ -3,7 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { BarbellIcon, ChartIcon, LogOutIcon } from "@/components/icons";
-import { canAccessAdmin } from "@/components/nav/nav-config";
+import { canAccessAdmin, SIGN_IN } from "@/components/nav/nav-config";
 import { useMyGym } from "@/lib/domain";
 import { ROLE_LABELS, signOut, useStaffSession } from "@/lib/session";
 
@@ -41,7 +41,7 @@ export function StaffChrome({ children }: { children: ReactNode }) {
             </Link>
           )}
           <Link
-            href="/gym/sign-in"
+            href={SIGN_IN}
             onClick={() => void signOut()}
             className="flex items-center gap-1.5 text-mist-dim transition-colors hover:text-hazard"
           >

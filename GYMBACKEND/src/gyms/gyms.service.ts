@@ -3,21 +3,25 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  type OnModuleInit,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/mongoose";
-import { FilterQuery, Model, Types } from "mongoose";
-import { paginate, type Paginated, type PaginationQuery } from "@/common/dto/pagination.dto";
+import { FilterQuery, Model, PipelineStage, Types } from "mongoose";
+import { paginate, type Paginated } from "@/common/dto/pagination.dto";
 import { slugify } from "@/common/utils/reference";
 import type { AuthUser } from "@/common/types";
 import { PlansService } from "@/plans/plans.service";
+import { GeocodingService } from "@/gyms/geocoding.service";
 import {
   PAYMENTS_PROVIDER,
   type PaymentsProvider,
 } from "@/payments/providers/provider.port";
 import { Gym, type GymDocument } from "@/gyms/schemas/gym.schema";
 import type {
+  FindGymsQuery,
   ResolveAccountDto,
   SetSettlementAccountDto,
   UpdateGymDto,
@@ -26,6 +30,11 @@ import type {
 /** What the public sees about a gym. No owner, no bank details, no ids beyond its own. */
 export type PublicGym = {
   id: string;
+  /** Where the gym is, once someone has placed its pin. */
+  lat?: number;
+  lng?: number;
+  /** How far from the member who asked, in km. Absent if they did not say. */
+  distanceKm?: number;
   name: string;
   branch: string;
   area: string;
@@ -59,10 +68,32 @@ export type OwnerGym = PublicGym & {
 };
 
 @Injectable()
-export class GymsService {
+export class GymsService implements OnModuleInit {
+  private readonly logger = new Logger("Gyms");
+
+  /**
+   * `$geoNear` refuses to run without a 2dsphere index, and Mongoose only
+   * builds schema indexes when `autoIndex` is on — which it deliberately is not
+   * in production. So the one index a query hard-depends on is created here,
+   * explicitly and idempotently, rather than left to a manual step someone has
+   * to remember on every new deployment.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.gyms.collection.createIndex(
+        { location: "2dsphere" },
+        { sparse: true, background: true, name: "location_2dsphere" },
+      );
+    } catch (cause: unknown) {
+      // Not fatal: everything except "nearest first" works without it.
+      this.logger.warn(`Could not ensure the location index: ${String(cause)}`);
+    }
+  }
+
   constructor(
     @InjectModel(Gym.name) private readonly gyms: Model<GymDocument>,
     private readonly plans: PlansService,
+    private readonly geocoding: GeocodingService,
     private readonly config: ConfigService,
     @Inject(PAYMENTS_PROVIDER) private readonly provider: PaymentsProvider,
   ) {}
@@ -81,11 +112,46 @@ export class GymsService {
     // A gym with nothing to sell is a dead end, so it starts with three plans.
     await this.plans.createDefaults(gym._id);
 
+    // A first guess at the pin, from the only address parts sign-up asks for.
+    // Deliberately not awaited: an owner should not wait on a third-party
+    // geocoder to finish signing up, and a gym without a pin is still fine.
+    void this.placeApproximately(gym._id, input.branch, input.area);
+
     return gym;
   }
 
+  /**
+   * Best-effort background pin, so a new gym appears under "near me" without
+   * anyone opening Setup. It is neighbourhood-accurate at best — the owner can
+   * move it — and it never overwrites a pin that is already there.
+   */
+  private async placeApproximately(
+    gymId: Types.ObjectId,
+    branch: string,
+    area: string,
+  ): Promise<void> {
+    try {
+      const found = await this.geocoding.locate({ branch, area });
+      if (!found) return;
+
+      await this.gyms.updateOne(
+        { _id: gymId, location: { $exists: false } },
+        {
+          $set: {
+            location: {
+              type: "Point",
+              coordinates: [found.lng, found.lat],
+            },
+          },
+        },
+      );
+    } catch (cause: unknown) {
+      this.logger.warn(`Could not place ${String(gymId)}: ${String(cause)}`);
+    }
+  }
+
   /** Discover. Only active gyms, and only public fields. */
-  async findPublic(query: PaginationQuery): Promise<Paginated<PublicGym>> {
+  async findPublic(query: FindGymsQuery): Promise<Paginated<PublicGym>> {
     const filter: FilterQuery<GymDocument> = { status: "active" };
 
     if (query.q) {
@@ -98,6 +164,10 @@ export class GymsService {
       ];
     }
 
+    if (query.lat !== undefined && query.lng !== undefined) {
+      return this.findNearest(filter, query, query.lat, query.lng);
+    }
+
     const [rows, total] = await Promise.all([
       this.gyms
         .find(filter)
@@ -108,7 +178,53 @@ export class GymsService {
       this.gyms.countDocuments(filter),
     ]);
 
-    return paginate(rows.map(toPublic), total, query);
+    return paginate(
+      rows.map((row) => toPublic(row)),
+      total,
+      query,
+    );
+  }
+
+  /**
+   * The same list, ordered by how far each gym is from the member.
+   *
+   * `$geoNear` has to be the first stage of a pipeline, so the search filter
+   * rides along in its own `query` option rather than as a later `$match`. Gyms
+   * with no pin are absent from the sparse index and drop out entirely — which
+   * is the honest answer to "what is near me" for a gym nobody has located.
+   */
+  private async findNearest(
+    filter: FilterQuery<GymDocument>,
+    query: FindGymsQuery,
+    lat: number,
+    lng: number,
+  ): Promise<Paginated<PublicGym>> {
+    const near: PipelineStage.GeoNear = {
+      $geoNear: {
+        // GeoJSON is [longitude, latitude] — the reverse of how it is spoken.
+        near: { type: "Point", coordinates: [lng, lat] },
+        distanceField: "distanceMetres",
+        maxDistance: (query.radiusKm ?? 100) * 1000,
+        query: filter,
+        spherical: true,
+      },
+    };
+
+    const [rows, counted] = await Promise.all([
+      this.gyms.aggregate<GymDocument & { distanceMetres: number }>([
+        near,
+        { $skip: (query.page - 1) * query.limit },
+        { $limit: query.limit },
+      ]),
+      this.gyms.aggregate<{ count: number }>([near, { $count: "count" }]),
+    ]);
+
+    const items = rows.map((row) =>
+      // One decimal of a kilometre is as precise as this is ever useful.
+      toPublic(row, Math.round(row.distanceMetres / 100) / 10),
+    );
+
+    return paginate(items, counted[0]?.count ?? 0, query);
   }
 
   async findPublicById(id: string): Promise<PublicGym> {
@@ -146,7 +262,26 @@ export class GymsService {
     dto: UpdateGymDto,
   ): Promise<OwnerGym> {
     const gym = await this.requireStaffGym(gymId, user);
-    Object.assign(gym, dto);
+
+    // The pin arrives as two plain numbers and is stored as GeoJSON, so it is
+    // pulled out before the rest of the payload is applied.
+    const { lat, lng, ...fields } = dto;
+
+    /**
+     * Only fields the request actually sent.
+     *
+     * A DTO built by class-transformer carries *every* declared property, set
+     * to undefined wherever the payload omitted it — class fields are real own
+     * properties under this compile target. Copying that across wholesale set
+     * `name`, `branch`, `area` and `dayPassPrice` to undefined on a PATCH that
+     * never mentioned them, and the save then failed on required fields.
+     */
+    applyDefined(gym, fields);
+
+    if (lat !== undefined && lng !== undefined) {
+      gym.location = { type: "Point", coordinates: [lng, lat] };
+    }
+
     await gym.save();
     return toOwner(gym, this.provider.name);
   }
@@ -260,7 +395,13 @@ export class GymsService {
   }
 }
 
-function toPublic(gym: Gym & { _id: Types.ObjectId }): PublicGym {
+function toPublic(
+  gym: Gym & { _id: Types.ObjectId },
+  /** Only present when the caller told us where they were. */
+  distanceKm?: number,
+): PublicGym {
+  const [lng, lat] = gym.location?.coordinates ?? [];
+
   return {
     id: gym._id.toString(),
     name: gym.name,
@@ -269,6 +410,9 @@ function toPublic(gym: Gym & { _id: Types.ObjectId }): PublicGym {
     slug: gym.slug,
     dayPassPrice: gym.dayPassPrice,
     about: gym.about,
+    lat,
+    lng,
+    distanceKm,
   };
 }
 
@@ -295,6 +439,24 @@ function toOwner(gym: GymDocument, provider: string): OwnerGym {
         }
       : undefined,
   };
+}
+
+/**
+ * Copies only the keys that carry a real value.
+ *
+ * A DTO built by class-transformer carries *every* declared property, set to
+ * undefined wherever the request omitted it — under this compile target class
+ * fields are real own properties. Assigning that wholesale set `name`,
+ * `branch`, `area` and `dayPassPrice` to undefined on a PATCH that never
+ * mentioned them, and the save then failed on required fields.
+ */
+export function applyDefined(
+  target: { set: (path: string, value: unknown) => unknown },
+  source: Record<string, unknown>,
+): void {
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) target.set(key, value);
+  }
 }
 
 /**

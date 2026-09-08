@@ -18,6 +18,11 @@ export type Gym = {
   slug: string;
   dayPassPrice: number;
   about?: string;
+  /** Where the gym is, once its owner has placed the pin. */
+  lat?: number;
+  lng?: number;
+  /** How far from the member, in km. Only when the browser shared a position. */
+  distanceKm?: number;
 };
 
 export type OwnerGym = Gym & {
@@ -152,15 +157,30 @@ export type ScanResult = {
   detail: string;
   kind: "member" | "day_pass" | "unknown";
   offerRenewal?: boolean;
+  /** Present when a renewal would fix it, so the desk can reach the member. */
+  contact?: { name: string; phone: string };
 };
 
 /* ------------------------------------------------------------------
    Reads
    ------------------------------------------------------------------ */
 
-export function useGyms(search = ""): Query<Paginated<Gym>> {
-  const query = search ? `?q=${encodeURIComponent(search)}&limit=20` : "?limit=20";
-  return useApi<Paginated<Gym>>(`/gyms${query}`);
+/**
+ * Listed gyms. Given a position the API orders them by distance and drops the
+ * ones nobody has placed on the map; without one it falls back to every gym in
+ * alphabetical order.
+ */
+export function useGyms(
+  search = "",
+  near?: { lat: number; lng: number } | null,
+): Query<Paginated<Gym>> {
+  const params = new URLSearchParams({ limit: "20" });
+  if (search) params.set("q", search);
+  if (near) {
+    params.set("lat", String(near.lat));
+    params.set("lng", String(near.lng));
+  }
+  return useApi<Paginated<Gym>>(`/gyms?${params.toString()}`);
 }
 
 export function usePlans(gymId: string | undefined): Query<{ items: Plan[] }> {
@@ -281,6 +301,15 @@ export function useBanks(): Query<{ items: Bank[] }> {
    Writes
    ------------------------------------------------------------------ */
 
+/** An address the owner typed, turned into places they can pick from. */
+export type GeocodeHit = { label: string; lat: number; lng: number };
+
+export function geocodeAddress(query: string) {
+  return api.get<{ items: GeocodeHit[] }>(
+    `/geocode?q=${encodeURIComponent(query)}`,
+  );
+}
+
 export function resolveAccount(bankCode: string, accountNumber: string) {
   return api.post<{ accountName: string }>("/banks/resolve", {
     bankCode,
@@ -352,7 +381,14 @@ export function retirePlan(gymId: string, planId: string) {
 
 export function updateGym(
   gymId: string,
-  input: { name?: string; branch?: string; area?: string; dayPassPrice?: number },
+  input: {
+    name?: string;
+    branch?: string;
+    area?: string;
+    dayPassPrice?: number;
+    lat?: number;
+    lng?: number;
+  },
 ) {
   return api.patch<OwnerGym>(`/gyms/${gymId}`, input);
 }

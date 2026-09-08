@@ -92,6 +92,13 @@ export const STAFF_NAV: Record<Exclude<Role, "member">, NavItem[]> = {
   scanner: [SCANNER],
 };
 
+/**
+ * The one front door. Signing out sends everyone here, staff included: this
+ * page takes any account's phone number and routes on the role it finds, so
+ * nobody has to remember which of two sign-in pages was theirs.
+ */
+export const SIGN_IN = "/sign-in" as Route;
+
 /** Where a role lands after signing in. */
 export function homeRouteFor(role: Role): Route {
   return role === "scanner" ? "/staff/scanner" : "/admin/dashboard";

@@ -9,6 +9,7 @@ import {
   canAccessAdmin,
   homeRouteFor,
   MEMBER_NAV,
+  SIGN_IN,
   STAFF_NAV,
 } from "@/components/nav/nav-config";
 import { SideNav } from "@/components/nav/side-nav";
@@ -44,7 +45,9 @@ export function AppShell({
     if (status !== "ready") return;
 
     if (!user) {
-      router.replace(audience === "member" ? "/sign-in" : "/gym/sign-in");
+      // Same front door as signing out. Being timed out and signing out feel
+      // identical from the outside, so they should not land in two places.
+      router.replace(SIGN_IN);
       return;
     }
 
@@ -64,7 +67,7 @@ export function AppShell({
     if (user.role !== "member" && !canAccessAdmin(user.role)) {
       router.replace(homeRouteFor(user.role));
     }
-  }, [status, user, wrongAudience, audience, router]);
+  }, [status, user, wrongAudience, router]);
 
   if (status !== "ready" || !user || wrongAudience || user.mustChangePassword) {
     return <ShellSkeleton />;
@@ -94,7 +97,6 @@ function MemberShell({
       items={MEMBER_NAV}
       brand={home ? `${home.name} — ${home.branch}` : "IronCore"}
       user={{ name, role: "Member" }}
-      signInHref="/sign-in"
     >
       {children}
     </Shell>
@@ -118,7 +120,6 @@ function StaffShell({
       items={STAFF_NAV[role]}
       brand={data ? `${data.name} — ${data.branch}` : "Your gym"}
       user={{ name, role: ROLE_LABELS[role] }}
-      signInHref="/gym/sign-in"
     >
       {children}
     </Shell>
@@ -129,27 +130,19 @@ function Shell({
   items,
   brand,
   user,
-  signInHref,
   children,
 }: {
   items: React.ComponentProps<typeof SideNav>["items"];
   brand: string;
   user: { name: string; role: string };
-  /** Staff sign back in at their own door, members at theirs. */
-  signInHref: string;
   children: ReactNode;
 }) {
   return (
     <div className="flex min-h-dvh">
-      <SideNav
-        items={items}
-        brand={brand}
-        user={user}
-        signInHref={signInHref}
-      />
+      <SideNav items={items} brand={brand} user={user} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <MobileTopBar signInHref={signInHref} />
+        <MobileTopBar />
         <main className="flex-1 pb-28 md:pb-14">{children}</main>
         <BottomNav items={items} />
       </div>
@@ -161,7 +154,7 @@ function Shell({
  * Phone-only brand bar — the rail is hidden at this width, so the account
  * actions that live in it have to appear here instead.
  */
-function MobileTopBar({ signInHref }: { signInHref: string }) {
+function MobileTopBar() {
   const router = useRouter();
 
   return (
@@ -188,7 +181,7 @@ function MobileTopBar({ signInHref }: { signInHref: string }) {
           type="button"
           onClick={async () => {
             await signOut();
-            router.replace(signInHref);
+            router.replace(SIGN_IN);
           }}
           className="flex items-center gap-1.5 text-micro font-semibold tracking-[1px] text-steel-soft uppercase"
         >

@@ -26,7 +26,6 @@ export function ScannerClient() {
   const [token, setToken] = useState("");
   const [result, setResult] = useState<ScanResult | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
-  const [reminderSent, setReminderSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
@@ -53,7 +52,6 @@ export function ScannerClient() {
     busy.current = true;
     setChecking(true);
     setError(null);
-    setReminderSent(false);
 
     try {
       const outcome = await scanToken(gym.data.id, trimmed);
@@ -95,7 +93,6 @@ export function ScannerClient() {
   /** Clears the last verdict and lets the camera look again. */
   function scanNext() {
     setResult(null);
-    setReminderSent(false);
     setToken("");
     setError(null);
     camera.resume();
@@ -108,7 +105,6 @@ export function ScannerClient() {
 
   function reset() {
     setResult(null);
-    setReminderSent(false);
     setToken("");
     setError(null);
     // A manual reset is also a "ready for the next one", if the camera is on.
@@ -221,14 +217,7 @@ export function ScannerClient() {
         )}
 
         {result && !result.allowed && result.offerRenewal && (
-          <Button
-            variant={reminderSent ? "valid" : "primary"}
-            className="mt-6"
-            disabled={reminderSent}
-            onClick={() => setReminderSent(true)}
-          >
-            {reminderSent ? "Reminder sent" : "Send renewal reminder"}
-          </Button>
+          <ChaseRenewal contact={result.contact} />
         )}
       </aside>
     </div>
@@ -407,5 +396,61 @@ function GateScene({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * What the desk can actually do about an expired membership.
+ *
+ * There is no email or SMS gateway wired up, so nothing can be "sent" from
+ * here — a button claiming otherwise would just be a lie the desk believes.
+ * Instead this hands over the member's number: one tap opens WhatsApp with the
+ * message already written, or dials them.
+ */
+function ChaseRenewal({
+  contact,
+}: {
+  contact?: { name: string; phone: string };
+}) {
+  if (!contact) {
+    return (
+      <p className="mt-6 text-helper leading-[1.5] text-mist-dim">
+        Their plan has run out. They can renew in the app, or at this desk.
+      </p>
+    );
+  }
+
+  // WhatsApp wants a full international number with no punctuation. Nigerian
+  // numbers are stored as "080…", which is "23480…" once the trunk 0 is gone.
+  const digits = contact.phone.replace(/\D/g, "");
+  const international = digits.startsWith("0") ? `234${digits.slice(1)}` : digits;
+  const message = encodeURIComponent(
+    `Hi ${contact.name.split(" ")[0]}, your gym membership has expired. You can renew in the IronCore app or at the front desk.`,
+  );
+
+  return (
+    <div className="mt-6">
+      <p className="text-micro font-semibold tracking-[1px] text-mist-dim uppercase">
+        Remind them
+      </p>
+      <p className="mt-1.5 font-mono text-sm text-white">{contact.phone}</p>
+
+      <div className="mt-3 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-1">
+        <a
+          href={`https://wa.me/${international}?text=${message}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex h-11 items-center justify-center rounded-ctl bg-valid px-4 text-btn font-bold text-white transition-opacity hover:opacity-90"
+        >
+          Message on WhatsApp
+        </a>
+        <a
+          href={`tel:${contact.phone}`}
+          className="flex h-11 items-center justify-center rounded-ctl border border-white/20 px-4 text-btn font-bold text-mist transition-colors hover:bg-white/5"
+        >
+          Call {contact.name.split(" ")[0]}
+        </a>
+      </div>
+    </div>
   );
 }

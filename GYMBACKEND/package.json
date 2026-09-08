@@ -2,7 +2,7 @@
   "name": "gymbackend",
   "version": "0.1.0",
   "private": true,
-  "description": "IronCore API \u2014 gyms, memberships, payments and settlements",
+  "description": "IronCore API — gyms, memberships, payments and settlements",
   "scripts": {
     "build": "nest build",
     "start": "nest start",
@@ -43,6 +43,7 @@
     "@types/node": "^24.10.1",
     "@types/supertest": "^6.0.3",
     "jest": "^30.2.0",
+    "mongodb-memory-server": "^11.2.0",
     "supertest": "^7.1.4",
     "ts-jest": "^29.4.4",
     "ts-node": "^10.9.2",
