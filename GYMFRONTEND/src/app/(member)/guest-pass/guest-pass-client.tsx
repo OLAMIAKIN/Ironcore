@@ -191,9 +191,14 @@ export function GuestPassClient({
                 disabled={!gym}
               >
                 {gym
-                  ? `Pay ${naira(gym.dayPassPrice)} & get token`
+                  ? `Buy a pass · ${naira(gym.dayPassPrice)} + fees`
                   : "Choose a gym"}
               </Button>
+
+              <Helper className="mt-2.5 text-center">
+                The gym receives its full price; card and platform charges are
+                added on top. You will see the exact total before you pay.
+              </Helper>
 
               <Helper className="mt-2.5 text-center">
                 Single entry. Passes are not refundable once issued.
@@ -226,6 +231,7 @@ export function GuestPassClient({
                 gymName={gym.name}
                 gymNet={session.split.gymNet}
                 platformFee={session.split.platformFee}
+                gatewayFee={session.split.gatewayFee}
                 bare
               />
             ) : null

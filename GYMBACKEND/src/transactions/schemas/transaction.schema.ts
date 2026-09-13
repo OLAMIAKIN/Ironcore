@@ -48,6 +48,21 @@ export class Transaction {
   @Prop({ required: true, min: 0 })
   gymNet!: number;
 
+  /**
+   * What the gateway was expected to take, added on top of the price so the gym
+   * still receives what it quoted. Zero in the sandbox.
+   */
+  @Prop({ required: true, min: 0, default: 0 })
+  gatewayFee!: number;
+
+  /**
+   * What the gateway actually took, read back from it after the payment. Any
+   * gap between this and `gatewayFee` is a mispriced fee model, and is worth
+   * knowing about rather than quietly absorbing.
+   */
+  @Prop({ min: 0 })
+  gatewayFeeActual?: number;
+
   @Prop({ required: true, default: "NGN" })
   currency!: string;
 

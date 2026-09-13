@@ -328,7 +328,7 @@ function CheckoutDialog({
               )}
 
               <Button type="submit" variant="valid">
-                {payLabel(channel)}
+                {payLabel(channel, session?.amount)}
               </Button>
 
               <label className="mt-3.5 flex items-start gap-2.5 rounded-ctl border border-dashed border-line-strong p-3">
@@ -373,10 +373,16 @@ async function payThroughGateway(
   return waitForPayment(session.reference);
 }
 
-function payLabel(channel: PaymentChannel): string {
+/**
+ * The button carries the real total, not the gym's headline price. Fees are
+ * added on top of that price, so this is the last and clearest place to say
+ * what is actually leaving the payer's account.
+ */
+function payLabel(channel: PaymentChannel, amount?: number): string {
   if (channel === "transfer") return "I have sent the money";
-  if (channel === "opay") return "Pay with Opay";
-  return "Pay now";
+  const sum = amount === undefined ? "" : ` ${naira(amount)}`;
+  if (channel === "opay") return `Pay${sum} with Opay`;
+  return amount === undefined ? "Pay now" : `Pay ${naira(amount)}`;
 }
 
 function declineFor(channel: PaymentChannel): string {

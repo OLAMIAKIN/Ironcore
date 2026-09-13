@@ -37,6 +37,14 @@ export class Settlement {
 
   @Prop()
   paidAt?: Date;
+
+  /**
+   * The gateway's own id for this payout, when it came from the gateway rather
+   * than being simulated by the sandbox. Unique, so re-reading the same payout
+   * cannot record it twice.
+   */
+  @Prop({ index: true, sparse: true, unique: true })
+  providerSettlementId?: string;
 }
 
 export type SettlementDocument = Settlement & Document<Types.ObjectId>;

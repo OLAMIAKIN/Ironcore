@@ -315,6 +315,9 @@ export class GymsService implements OnModuleInit {
 
     const handles = await this.provider.registerSettlementAccount({
       gymName: `${gym.name} — ${gym.branch}`,
+      // Resolved from the bank just above, so the gateway is told who actually
+      // holds the account rather than being handed the gym's name for it.
+      accountName,
       bankCode: dto.bankCode,
       accountNumber: dto.accountNumber,
       feeRate: this.config.getOrThrow<number>("PLATFORM_FEE_RATE"),

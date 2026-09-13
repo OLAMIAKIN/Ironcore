@@ -55,8 +55,12 @@ export type CheckoutSession = {
   /** Real gateway only — where to send the payer. */
   authorizationUrl?: string;
   transfer?: { bankName: string; accountNumber: string; expiresAt: string };
-  /** The payer's own split. Absent on listing payments and owner endpoints. */
-  split?: { gymNet: number; platformFee: number };
+  /**
+   * Where the payer's money goes. Absent on listing payments and owner
+   * endpoints. The three parts add up to `amount`, because both fees are added
+   * on top of the gym's price rather than taken out of it.
+   */
+  split?: { gymNet: number; platformFee: number; gatewayFee: number };
 };
 
 export type InitializeInput = {
@@ -106,6 +110,14 @@ export async function waitForPayment(
 }
 
 /** The transparency line above a pay button — spelled out, not buried. */
+/** The two fees a payer is charged on top of the gym's own price. */
+export function feesOf(split: {
+  platformFee: number;
+  gatewayFee: number;
+}): number {
+  return split.platformFee + split.gatewayFee;
+}
+
 export function splitSentence(
   gymName: string,
   split: { gymNet: number; platformFee: number },

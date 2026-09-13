@@ -1,10 +1,12 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
 import { virtualAccountNumber } from "@/common/utils/reference";
+import { NO_FEES } from "@/payments/fees";
 import type {
   Bank,
   InitializeInput,
   InitializeResult,
+  ProviderSettlement,
   PaymentsProvider,
   ProviderEvent,
   ResolvedAccount,
@@ -69,6 +71,21 @@ const LAST_NAMES = [
 export class MockPaymentsProvider implements PaymentsProvider {
   readonly name = "mock" as const;
   private readonly logger = new Logger("MockPayments");
+
+  /** The sandbox takes nothing, so a price in equals the same price out. */
+  readonly fees = NO_FEES;
+
+  /**
+   * There is no gateway here to ask, so the sandbox stands in for one: a
+   * payment is treated as paid out a day after it succeeded, which is roughly
+   * what a real gateway does and keeps local development honest about timing.
+   *
+   * The real adapter reads actual payouts; this one only has to be plausible,
+   * so it reports no payouts and lets the caller fall back to its own rule.
+   */
+  async listSettlements(): Promise<ProviderSettlement[]> {
+    return [];
+  }
 
   async initialize(input: InitializeInput): Promise<InitializeResult> {
     this.logger.debug(

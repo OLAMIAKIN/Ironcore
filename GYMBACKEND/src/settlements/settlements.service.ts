@@ -1,7 +1,11 @@
-import { Injectable, Logger, type OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, type OnModuleInit } from "@nestjs/common";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
 import { paymentReference } from "@/common/utils/reference";
+import {
+  PAYMENTS_PROVIDER,
+  type PaymentsProvider,
+} from "@/payments/providers/provider.port";
 import { Gym, type GymDocument } from "@/gyms/schemas/gym.schema";
 import {
   Settlement,
@@ -12,9 +16,16 @@ import {
   type TransactionDocument,
 } from "@/transactions/schemas/transaction.schema";
 
-/** Payments are paid out the next working day, the way a real gateway settles. */
-const SETTLEMENT_DELAY_HOURS = 24;
+/**
+ * Only used by the sandbox, which has no gateway to ask. The real adapter reads
+ * actual payouts and this number means nothing to it.
+ */
+const SANDBOX_DELAY_HOURS = 24;
+
 const SWEEP_INTERVAL_MS = 10 * 60_000;
+
+/** How far back to ask the gateway for payouts on each sweep. */
+const RECONCILE_WINDOW_DAYS = 14;
 
 export type SettlementRow = {
   id: string;
@@ -29,10 +40,17 @@ export type SettlementRow = {
 };
 
 /**
- * Moves confirmed payments from "pending settlement" to "settled to your bank".
+ * Records when the gateway actually paid a gym out.
  *
- * The two states are deliberately distinct and neither is a balance: IronCore
- * never holds the gym's money, it only records when the payout ran.
+ * This used to be a timer: anything older than a day was called "settled". That
+ * was a guess dressed as a fact — it would report a gym as paid while the
+ * gateway was holding the money back, which is exactly the sort of thing an
+ * owner reconciles against their bank statement and stops trusting you over.
+ *
+ * Now the gateway is the source of truth. The sandbox, having no gateway, keeps
+ * the old simulation so local development still shows something.
+ *
+ * Neither state is a balance: IronCore never holds the gym's money.
  */
 @Injectable()
 export class SettlementsService implements OnModuleInit {
@@ -45,6 +63,7 @@ export class SettlementsService implements OnModuleInit {
     @InjectModel(Transaction.name)
     private readonly transactions: Model<TransactionDocument>,
     @InjectModel(Gym.name) private readonly gyms: Model<GymDocument>,
+    @Inject(PAYMENTS_PROVIDER) private readonly provider: PaymentsProvider,
   ) {}
 
   onModuleInit(): void {
@@ -62,9 +81,88 @@ export class SettlementsService implements OnModuleInit {
     if (this.timer) clearInterval(this.timer);
   }
 
-  /** Settles everything that has been sitting long enough, gym by gym. */
+  /** Reconciles against the gateway, or simulates when there is not one. */
   async runDue(): Promise<number> {
-    const cutoff = new Date(Date.now() - SETTLEMENT_DELAY_HOURS * 60 * 60_000);
+    return this.provider.name === "mock"
+      ? this.simulate()
+      : this.reconcile();
+  }
+
+  /**
+   * Reads what the gateway has actually paid out and marks those payments
+   * settled. A payout to a subaccount is the gym being paid; a payout with no
+   * subaccount is the platform's own share and is none of the gym's business.
+   */
+  private async reconcile(): Promise<number> {
+    const since = new Date(
+      Date.now() - RECONCILE_WINDOW_DAYS * 24 * 60 * 60_000,
+    );
+
+    const payouts = await this.provider.listSettlements(since);
+    let recorded = 0;
+
+    for (const payout of payouts) {
+      if (!payout.subaccountCode || payout.references.length === 0) continue;
+
+      // Re-reading the same payout must not record it twice.
+      const seen = await this.settlements.exists({
+        providerSettlementId: payout.id,
+      });
+      if (seen) continue;
+
+      const gym = await this.gyms
+        .findOne({ "settlementAccount.subaccountCode": payout.subaccountCode })
+        .lean();
+      if (!gym?.settlementAccount) continue;
+
+      const covered = await this.transactions
+        .find({
+          gymId: gym._id,
+          reference: { $in: payout.references },
+          settlementStatus: "pending",
+        })
+        .select("_id gymNet")
+        .lean();
+
+      if (covered.length === 0) continue;
+
+      const settlement = await this.settlements.create({
+        gymId: gym._id,
+        reference: paymentReference("STL"),
+        providerSettlementId: payout.id,
+        // What the gateway says it paid, not what we predicted it would.
+        amount: payout.amount,
+        transactionCount: covered.length,
+        status: "paid",
+        bankName: gym.settlementAccount.bankName,
+        accountLast4: gym.settlementAccount.accountNumber.slice(-4),
+        paidAt: payout.settledAt ?? new Date(),
+      });
+
+      await this.transactions.updateMany(
+        {
+          _id: { $in: covered.map((row) => row._id) },
+          settlementStatus: "pending",
+        },
+        {
+          $set: {
+            settlementStatus: "settled",
+            settledAt: settlement.paidAt,
+            settlementId: settlement._id,
+          },
+        },
+      );
+
+      recorded += 1;
+    }
+
+    if (recorded) this.logger.log(`Recorded ${recorded} gateway payout(s)`);
+    return recorded;
+  }
+
+  /** Sandbox only: stands in for a gateway that is not there. */
+  private async simulate(): Promise<number> {
+    const cutoff = new Date(Date.now() - SANDBOX_DELAY_HOURS * 60 * 60_000);
 
     const due = await this.transactions.aggregate<{
       _id: Types.ObjectId;

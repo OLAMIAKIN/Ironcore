@@ -20,7 +20,7 @@ import { SelectField } from "@/components/ui/field";
 import { cn } from "@/lib/cn";
 import { naira } from "@/lib/format";
 import { useGyms, useMySubscriptions, usePlans, type Plan } from "@/lib/domain";
-import { channelLabel, type CheckoutSession } from "@/lib/payments";
+import { channelLabel, feesOf, type CheckoutSession } from "@/lib/payments";
 
 /**
  * Joining and renewing, which are the same purchase from the member's side.
@@ -136,10 +136,11 @@ export function SubscribeClient() {
                   }
                 />
                 <ListItem
-                  title="IronCore platform fee"
+                  title="Card & platform charges"
+                  meta="Added on top, so the gym is paid in full"
                   right={
                     <span className="font-mono text-sm text-steel-soft">
-                      {naira(receipt.session.split.platformFee)}
+                      {naira(feesOf(receipt.session.split))}
                     </span>
                   }
                 />
@@ -304,9 +305,8 @@ export function SubscribeClient() {
             </div>
 
             <Helper className="mt-3">
-              Your payment is split automatically: {gymName} receives their share
-              directly, and a small platform fee supports IronCore. You will see
-              both figures before you pay.
+              {gymName} receives the full price above. Card and platform charges
+              are added on top, and you will see the exact total before you pay.
             </Helper>
 
             <div className="mt-4">
@@ -315,7 +315,7 @@ export function SubscribeClient() {
                 disabled={!plan || !gymId}
               >
                 {plan
-                  ? `${current ? "Renew" : "Join"} · ${naira(plan.price)}`
+                  ? `${current ? "Renew" : "Join"} · ${naira(plan.price)} + fees`
                   : "Choose a plan"}
               </Button>
             </div>
@@ -344,6 +344,7 @@ export function SubscribeClient() {
                 gymName={gymName}
                 gymNet={session.split.gymNet}
                 platformFee={session.split.platformFee}
+                gatewayFee={session.split.gatewayFee}
                 bare
               />
             ) : null

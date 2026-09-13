@@ -7,9 +7,11 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { fromKobo, toKobo } from "@/common/utils/money";
+import type { GatewayFees } from "@/payments/fees";
 import type {
   Bank,
   Channel,
+  ProviderSettlement,
   InitializeInput,
   InitializeResult,
   PaymentsProvider,
@@ -40,6 +42,73 @@ export class PaystackProvider implements PaymentsProvider {
 
   private get baseUrl(): string {
     return this.config.getOrThrow<string>("PAYSTACK_BASE_URL");
+  }
+
+  /**
+   * What Paystack keeps. Read from configuration rather than hard-coded — a
+   * negotiated rate is common, and getting it wrong pays the gym short.
+   */
+  get fees(): GatewayFees {
+    return {
+      percent: this.config.getOrThrow<number>("PAYSTACK_FEE_PERCENT"),
+      flat: this.config.getOrThrow<number>("PAYSTACK_FEE_FLAT"),
+      flatAppliesFrom: this.config.getOrThrow<number>("PAYSTACK_FEE_FLAT_FROM"),
+      cap: this.config.getOrThrow<number>("PAYSTACK_FEE_CAP"),
+    };
+  }
+
+  /**
+   * Payouts Paystack has actually made, with the payments each one covered.
+   *
+   * Two calls per payout: the list, then its transactions. Settlements are
+   * daily at most, so this stays small — and it is the only honest source for
+   * "your money has landed".
+   */
+  async listSettlements(since: Date): Promise<ProviderSettlement[]> {
+    const from = since.toISOString().slice(0, 10);
+
+    const rows = await this.call<
+      {
+        id: number;
+        domain?: string;
+        status?: string;
+        total_amount?: number;
+        settlement_date?: string;
+        settled_by?: string;
+        subaccount?: { subaccount_code?: string } | null;
+      }[]
+    >(`/settlement?from=${from}&perPage=100`);
+
+    const settled = rows.filter((row) => row.status === "success");
+    const out: ProviderSettlement[] = [];
+
+    for (const row of settled) {
+      out.push({
+        id: String(row.id),
+        amount: fromKobo(row.total_amount ?? 0),
+        settledAt: row.settlement_date ? new Date(row.settlement_date) : undefined,
+        subaccountCode: row.subaccount?.subaccount_code,
+        references: await this.settlementReferences(row.id),
+      });
+    }
+
+    return out;
+  }
+
+  /** Our own references for the payments inside one payout. */
+  private async settlementReferences(id: number): Promise<string[]> {
+    try {
+      const rows = await this.call<{ reference?: string }[]>(
+        `/settlement/${id}/transaction?perPage=200`,
+      );
+      return rows
+        .map((row) => row.reference)
+        .filter((reference): reference is string => Boolean(reference));
+    } catch (cause: unknown) {
+      // One unreadable payout should not stop the rest being reconciled.
+      this.logger.warn(`Could not read settlement ${id}: ${String(cause)}`);
+      return [];
+    }
   }
 
   private async call<T>(
@@ -90,10 +159,18 @@ export class PaystackProvider implements PaymentsProvider {
         // The gym's share is split by Paystack itself, so the platform never
         // holds the gym's money.
         subaccount: input.subaccountCode,
+        // A flat charge, not a percentage: the amount has already been grossed
+        // up so that what is left after this and Paystack's own fee is exactly
+        // the price the gym quoted.
         transaction_charge:
-          input.subaccountCode && input.gymNet !== undefined
-            ? toKobo(input.amount - input.gymNet)
+          input.subaccountCode && input.platformFee !== undefined
+            ? toKobo(input.platformFee)
             : undefined,
+        // Left exactly as it was. This is the configuration a live transaction
+        // was observed under — Paystack took its fee off the top and the
+        // subaccount received the remainder — and the gross-up above is built
+        // on that observed behaviour, so it is not something to change on a
+        // reading of the documentation alone.
         bearer: input.subaccountCode ? "account" : undefined,
         metadata: input.metadata ?? {},
       },
@@ -114,6 +191,7 @@ export class PaystackProvider implements PaymentsProvider {
       channel?: string;
       paid_at?: string;
       reference: string;
+      fees?: number;
       gateway_response?: string;
     }>(`/transaction/verify/${encodeURIComponent(reference)}`);
 
@@ -125,6 +203,8 @@ export class PaystackProvider implements PaymentsProvider {
             ? "failed"
             : "pending",
       amount: fromKobo(data.amount),
+      // What Paystack really kept, so the estimate can be checked against it.
+      gatewayFee: data.fees === undefined ? undefined : fromKobo(data.fees),
       channel: toChannel(data.channel),
       paidAt: data.paid_at ? new Date(data.paid_at) : undefined,
       providerReference: data.reference,
@@ -152,6 +232,7 @@ export class PaystackProvider implements PaymentsProvider {
 
   async registerSettlementAccount(input: {
     gymName: string;
+    accountName: string;
     bankCode: string;
     accountNumber: string;
     feeRate: number;
@@ -161,6 +242,9 @@ export class PaystackProvider implements PaymentsProvider {
       {
         method: "POST",
         body: {
+          // The business this subaccount belongs to, which is the gym — this is
+          // the label that identifies it in the Paystack dashboard, so it stays
+          // the gym rather than the account holder.
           business_name: input.gymName,
           bank_code: input.bankCode,
           account_number: input.accountNumber,
@@ -175,7 +259,9 @@ export class PaystackProvider implements PaymentsProvider {
         method: "POST",
         body: {
           type: "nuban",
-          name: input.gymName,
+          // A recipient is a person or entity being paid, so this is the name
+          // on the bank account as the bank itself reported it — not the gym's.
+          name: input.accountName,
           bank_code: input.bankCode,
           account_number: input.accountNumber,
           currency: "NGN",
@@ -210,6 +296,7 @@ export class PaystackProvider implements PaymentsProvider {
         id?: number;
         reference?: string;
         amount?: number;
+        fees?: number;
         channel?: string;
         paid_at?: string;
         gateway_response?: string;
@@ -226,6 +313,8 @@ export class PaystackProvider implements PaymentsProvider {
         reference,
         providerReference: reference,
         amount: event.data?.amount ? fromKobo(event.data.amount) : undefined,
+        gatewayFee:
+          event.data?.fees === undefined ? undefined : fromKobo(event.data.fees),
         channel: toChannel(event.data?.channel),
         paidAt: event.data?.paid_at ? new Date(event.data.paid_at) : new Date(),
       };

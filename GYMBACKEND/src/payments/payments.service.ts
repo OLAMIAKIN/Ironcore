@@ -10,7 +10,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { InjectModel } from "@nestjs/mongoose";
 import { Model, Types } from "mongoose";
-import { splitOf } from "@/common/utils/money";
+import { chargeFor, grossUp } from "@/payments/fees";
 import { paymentReference } from "@/common/utils/reference";
 import type { AuthUser } from "@/common/types";
 import { GymsService, settlementMatchesProvider } from "@/gyms/gyms.service";
@@ -47,8 +47,12 @@ export type CheckoutSession = {
   sandbox: boolean;
   authorizationUrl?: string;
   transfer?: { bankName: string; accountNumber: string; expiresAt: string };
-  /** Only ever shown to the person paying, never on an owner endpoint. */
-  split?: { gymNet: number; platformFee: number };
+  /**
+   * Where the money goes, for the person paying. `amount` is the sum of all
+   * three, because the fees are added on top of the gym's price rather than
+   * taken out of it.
+   */
+  split?: { gymNet: number; platformFee: number; gatewayFee: number };
 };
 
 @Injectable()
@@ -127,7 +131,7 @@ export class PaymentsService {
       subaccountCode: splitToGym
         ? gym?.settlementAccount?.subaccountCode
         : undefined,
-      gymNet: draft.gymNet,
+      platformFee: draft.platformFee,
       metadata: {
         purpose: draft.purpose,
         gymId: draft.gymId?.toString() ?? "",
@@ -158,7 +162,11 @@ export class PaymentsService {
       split:
         draft.purpose === "listing"
           ? undefined
-          : { gymNet: draft.gymNet, platformFee: draft.platformFee },
+          : {
+              gymNet: draft.gymNet,
+              platformFee: draft.platformFee,
+              gatewayFee: draft.gatewayFee,
+            },
     };
   }
 
@@ -170,8 +178,11 @@ export class PaymentsService {
   ): Promise<{
     purpose: Transaction["purpose"];
     gymId?: Types.ObjectId;
+    /** What the payer is charged: the price, plus both fees on top. */
     gross: number;
     platformFee: number;
+    /** What the gateway is expected to take. Confirmed against it afterwards. */
+    gatewayFee: number;
     gymNet: number;
     settlementStatus: Transaction["settlementStatus"];
     metadata: Record<string, string>;
@@ -191,11 +202,16 @@ export class PaymentsService {
         );
       }
 
+      // The listing is owed to the platform in full, so the gateway's fee is
+      // added on top rather than eaten out of it.
+      const listing = grossUp(plan.price, this.provider.fees);
+
       return {
         purpose: "listing",
         gymId: gym._id,
-        gross: plan.price,
+        gross: listing.total,
         platformFee: plan.price,
+        gatewayFee: listing.fee,
         gymNet: 0,
         settlementStatus: "not_applicable",
         metadata: {
@@ -212,11 +228,19 @@ export class PaymentsService {
     this.gyms.assertCanTakePayments(gym);
 
     if (dto.purpose === "day_pass") {
-      const split = splitOf(gym.dayPassPrice, this.feeRate);
+      const charge = chargeFor(
+        gym.dayPassPrice,
+        this.feeRate,
+        this.provider.fees,
+      );
+
       return {
         purpose: "day_pass",
         gymId: gym._id,
-        ...split,
+        gross: charge.total,
+        platformFee: charge.platformFee,
+        gatewayFee: charge.gatewayFee,
+        gymNet: charge.gymNet,
         settlementStatus: "pending",
         metadata: { guestName: dto.guestName ?? "" },
       };
@@ -228,12 +252,15 @@ export class PaymentsService {
 
     if (!dto.planId) throw new BadRequestException("Choose a plan");
     const plan = await this.plans.requireForGym(dto.planId, gym._id);
-    const split = splitOf(plan.price, this.feeRate);
+    const charge = chargeFor(plan.price, this.feeRate, this.provider.fees);
 
     return {
       purpose: "subscription",
       gymId: gym._id,
-      ...split,
+      gross: charge.total,
+      platformFee: charge.platformFee,
+      gatewayFee: charge.gatewayFee,
+      gymNet: charge.gymNet,
       settlementStatus: "pending",
       metadata: {
         planId: plan._id.toString(),
@@ -293,6 +320,7 @@ export class PaymentsService {
           providerReference: verified.providerReference,
           channel: verified.channel,
           amount: verified.amount,
+          gatewayFee: verified.gatewayFee,
           paidAt: verified.paidAt ?? new Date(),
         });
         transaction = await this.requireOwnTransaction(reference, user);
@@ -326,6 +354,8 @@ export class PaymentsService {
           : {
               gymNet: transaction.gymNet,
               platformFee: transaction.platformFee,
+              // What it actually cost, once the gateway has told us.
+              gatewayFee: transaction.gatewayFeeActual ?? transaction.gatewayFee,
             },
     };
   }
@@ -400,12 +430,28 @@ export class PaymentsService {
             event.providerReference ?? pending.providerReference,
           settlementStatus:
             pending.purpose === "listing" ? "not_applicable" : "pending",
+          // What the gateway really charged, when it tells us. Kept alongside
+          // the estimate rather than replacing it, so the two can be compared.
+          ...(event.gatewayFee === undefined
+            ? {}
+            : { gatewayFeeActual: event.gatewayFee }),
         },
       },
       { new: true },
     );
 
     if (!claimed) return; // Already settled by an earlier delivery.
+
+    // A fee model that is out by more than a naira of rounding means the gym is
+    // being paid short, which is worth saying loudly rather than absorbing.
+    if (
+      event.gatewayFee !== undefined &&
+      Math.abs(event.gatewayFee - claimed.gatewayFee) > 1
+    ) {
+      this.logger.warn(
+        `Gateway fee on ${claimed.reference} was ${event.gatewayFee}, expected ${claimed.gatewayFee} — check PAYSTACK_FEE_* against your contract`,
+      );
+    }
 
     await this.fulfil(claimed);
   }
